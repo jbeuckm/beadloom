@@ -4,6 +4,7 @@ import PaletteEditor from './PaletteEditor';
 import PaletteLibrary from './PaletteLibrary';
 import { Icon } from './icons';
 import { colorUsage } from '../lib/grid';
+import { compositeLayers } from '../lib/layers';
 import { contrastText } from '../util';
 import { serializePalette } from '../lib/designFormat';
 import * as storage from '../lib/storage';
@@ -16,8 +17,8 @@ export default function PalettePanel() {
 
   const palette = s.design.palette;
   const usage = useMemo(
-    () => colorUsage(s.design.cells.data),
-    [s.design.cells.data],
+    () => colorUsage(compositeLayers(s.design)),
+    [s.design],
   );
   const activeColor = palette.colors[s.activeColor];
 
@@ -48,45 +49,6 @@ export default function PalettePanel() {
 
   return (
     <div className="palette">
-      <header>
-        <div className="row">
-          <input
-            className="pname"
-            value={palette.name}
-            onChange={(e) => s.setPaletteName(e.target.value)}
-            aria-label="Palette name"
-            title="Palette name"
-            placeholder="Untitled palette"
-          />
-          <button
-            className="btn mini"
-            onClick={quickSave}
-            title="Save this palette to the browser"
-            aria-label="Save this palette"
-          >
-            <Icon name="save" size={18} />
-          </button>
-          <button
-            className="btn"
-            onClick={() => setLibraryOpen(true)}
-            title="Palette library — presets, saved palettes, import / export"
-          >
-            <Icon name="swatches" size={16} /> Library
-          </button>
-        </div>
-
-        <div className="bg-row">
-          <input
-            type="color"
-            value={s.design.background}
-            onChange={(e) => s.setBackground(e.target.value)}
-            aria-label="Background colour"
-            title="Background colour of empty cells"
-          />
-          <span className="hint">Bg</span>
-        </div>
-      </header>
-
       <div className="swatch-list" role="listbox" aria-label="Palette colours">
         {palette.colors.map((c, i) => {
           const n = usage.get(i) ?? 0;
@@ -107,7 +69,11 @@ export default function PalettePanel() {
               <button
                 className="swatch"
                 style={{ background: c.hex, color: contrastText(c.hex) }}
-                onClick={() => s.setActiveColor(i)}
+                onClick={() => {
+                  s.setActiveColor(i);
+                  if (s.selectedSelburoseId)
+                    s.recolorSelburose(s.selectedSelburoseId, i);
+                }}
                 title={`${c.name} — ${c.hex}${c.code ? ` · ${c.code}` : ''}`}
                 aria-label={`Use ${c.name}`}
                 aria-pressed={selected}
@@ -151,6 +117,41 @@ export default function PalettePanel() {
         >
           <Icon name="hash" size={16} />
         </button>
+
+        <input
+          className="pname"
+          value={palette.name}
+          onChange={(e) => s.setPaletteName(e.target.value)}
+          aria-label="Palette name"
+          title="Palette name"
+          placeholder="Untitled palette"
+        />
+        <button
+          className="btn mini"
+          onClick={quickSave}
+          title="Save this palette to the browser"
+          aria-label="Save this palette"
+        >
+          <Icon name="save" size={18} />
+        </button>
+        <button
+          className="btn"
+          onClick={() => setLibraryOpen(true)}
+          title="Palette library — presets, saved palettes, import / export"
+        >
+          <Icon name="swatches" size={16} /> Library
+        </button>
+
+        <div className="bg-row">
+          <input
+            type="color"
+            value={s.design.background}
+            onChange={(e) => s.setBackground(e.target.value)}
+            aria-label="Background colour"
+            title="Background colour of empty cells"
+          />
+          <span className="hint">Bg</span>
+        </div>
       </footer>
 
       {editing && <PaletteEditor id={editing} onClose={() => setEditing(null)} />}

@@ -4,6 +4,7 @@ import './styles.css';
 
 import { useStore } from './store/useStore';
 import { serializeDesign } from './lib/designFormat';
+import { compositeLayers } from './lib/layers';
 import * as storage from './lib/storage';
 import { debounce } from './util';
 
@@ -20,6 +21,9 @@ useStore.subscribe((s) => s.settings, (settings) => storage.writeSettings(settin
 // and assertions. Dev-only — never present in a production build.
 if (import.meta.env.DEV) {
   (window as unknown as { __beadloom: typeof useStore }).__beadloom = useStore;
+  (
+    window as unknown as { __beadloomComposite: () => number[][] }
+  ).__beadloomComposite = () => compositeLayers(useStore.getState().design);
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

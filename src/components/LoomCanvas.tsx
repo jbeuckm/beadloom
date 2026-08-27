@@ -9,21 +9,27 @@ import {
 import { useStore } from '../store/useStore';
 import { drawBase } from '../lib/render';
 import { linePoints, normRect } from '../lib/grid';
-import { pointInPolygon } from '../lib/shapes';
-import { paletteLabs, type Lab } from '../lib/color';
-import { traceReferenceGrid } from '../lib/trace';
-import { EMPTY, PX_PER_COL, type Rect, type ReferenceImage } from '../types';
+import { compositeLayers } from '../lib/layers';
+import {
+  pointInPolygon,
+  selburoseInsetShift,
+  selburoseParallelograms,
+  snapSelburoseCenter,
+} from '../lib/shapes';
+import type { BeadDesign, ImageLayer, SelburoseObject } from '../types';
+import { EMPTY, PX_PER_COL, type Rect } from '../types';
 import { clamp } from '../util';
 import {
-  getReferenceImage,
-  subscribeReferenceImage,
+  ensureImage,
+  getBitmap,
+  subscribeImages,
 } from '../lib/referenceImage';
 
 type RefMode = 'move' | 'scale' | 'rotate' | 'skewX' | 'skewY';
 
 /** Forward transform: image-local pixel (lx, ly) → screen point. */
 function refForwardScreen(
-  ref: ReferenceImage,
+  ref: ImageLayer,
   panX: number,
   panY: number,
   sc: number,
@@ -45,7 +51,7 @@ function refForwardScreen(
   };
 }
 
-function refHandles(ref: ReferenceImage, panX: number, panY: number, sc: number) {
+function refHandles(ref: ImageLayer, panX: number, panY: number, sc: number) {
   const f = refForwardScreen(ref, panX, panY, sc);
   const corners: Array<[number, number]> = [
     f(0, 0),
@@ -71,7 +77,7 @@ function refHandles(ref: ReferenceImage, panX: number, panY: number, sc: number)
 function hitRefHandle(
   sx: number,
   sy: number,
-  ref: ReferenceImage,
+  ref: ImageLayer,
   panX: number,
   panY: number,
   sc: number,
@@ -113,17 +119,19 @@ export default function LoomCanvas() {
   const tool = useStore((s) => s.tool);
   const activeColor = useStore((s) => s.activeColor);
   const selection = useStore((s) => s.selection);
+  const selectionMask = useStore((s) => s.selectionMask);
   const clipboard = useStore((s) => s.clipboard);
   const settings = useStore((s) => s.settings);
   const highlightRow = useStore((s) => s.highlightRow);
   const view = useStore((s) => s.view);
   const pasteMode = useStore((s) => s.pasteMode);
   const cursor = useStore((s) => s.cursor);
-  const reference = useStore((s) => s.reference);
+  const editingImage = useStore((s) => s.editingImage);
+  const selectedSelburoseId = useStore((s) => s.selectedSelburoseId);
   const [refNonce, setRefNonce] = useState(0);
 
-  // Redraw when the reference bitmap finishes decoding.
-  useEffect(() => subscribeReferenceImage(() => setRefNonce((n) => n + 1)), []);
+  // Redraw when any image-layer bitmap finishes decoding.
+  useEffect(() => subscribeImages(() => setRefNonce((n) => n + 1)), []);
 
   const asp = design.loom.cellAspect;
   const scale = PX_PER_COL * view.zoom;
@@ -148,8 +156,8 @@ export default function LoomCanvas() {
       }
   >(null);
   const panLast = useRef<{ x: number; y: number } | null>(null);
-  const resizing = useRef<null | 'cols' | 'rows'>(null);
   const refGesture = useRef<null | {
+    id: string; // image layer being transformed
     mode: RefMode;
     edge: number; // +1 top/right handle, -1 bottom/left
     gx0: number;
@@ -160,14 +168,21 @@ export default function LoomCanvas() {
     rot0: number;
     d0: number;
     ang0: number;
-    base: number[][] | null;
-    labs: Lab[];
   }>(null);
-  const refTraceRaf = useRef(false);
 
   const pendingPaint = useRef<Array<[number, number]>>([]);
   const paintRaf = useRef(false);
   const cursorRaf = useRef(false);
+
+  // selburose interaction
+  const objDrag = useRef<null | {
+    id: string;
+    gx0: number;
+    gy0: number;
+    ox: number;
+    oy: number;
+  }>(null);
+  const lastTap = useRef<null | { id: string; t: number }>(null);
 
   // ---- coordinate helpers ----------------------------------------------
   const toCell = useCallback(
@@ -181,6 +196,20 @@ export default function LoomCanvas() {
         c: Math.floor((x - v.panX) / sc),
         r: Math.floor((y - v.panY) / (sc * asp)),
         localX: x,
+      };
+    },
+    [asp],
+  );
+
+  /** Continuous cell position: x in column units, y in row units. */
+  const toCellF = useCallback(
+    (clientX: number, clientY: number) => {
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const v = S().view;
+      const sc = PX_PER_COL * v.zoom;
+      return {
+        cx: (clientX - rect.left - v.panX) / sc,
+        cy: (clientY - rect.top - v.panY) / (sc * asp),
       };
     },
     [asp],
@@ -312,45 +341,51 @@ export default function LoomCanvas() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const off = { scale, offX: view.panX, offY: view.panY };
-    drawBase(ctx, design, off, size.w, size.h, {
+    drawBase(ctx, design, compositeLayers(design), off, size.w, size.h, {
       showGrid: settings.showGrid,
       showRowNumbers: settings.showRowNumbers,
       highlightRow,
     });
 
-    // reference image overlay. Grid column-units map to screen as
-    // screen = pan + unit * scale (uniform on both axes — cell squish is baked
-    // into the reference transform, not the view here).
+    // Image layers draw over the composited beads (always on top), in layer
+    // order. Grid column-units map to screen as pan + unit*scale on both axes —
+    // the cell squish is baked into each image's transform, not the view.
     void refNonce;
-    const refImg = getReferenceImage();
-    if (reference && reference.visible) {
-      const deg = Math.PI / 180;
-      const dw = reference.w * reference.scale; // destination size, grid columns
-      const dh = reference.h * reference.scale;
-      if (refImg) {
-        ctx.save();
-        ctx.translate(view.panX, view.panY);
-        ctx.scale(scale, scale);
-        ctx.translate(reference.x, reference.y);
-        ctx.rotate(reference.rotationDeg * deg);
-        ctx.transform(
-          1,
-          Math.tan(reference.skewYDeg * deg),
-          Math.tan(reference.skewXDeg * deg),
-          1,
-          0,
-          0,
-        );
-        ctx.globalAlpha = clamp(reference.opacity, 0, 1);
-        ctx.imageSmoothingEnabled = true;
-        ctx.drawImage(refImg, -dw / 2, -dh / 2, dw, dh);
-        ctx.restore();
-      }
+    const deg = Math.PI / 180;
+    for (const layer of design.layers) {
+      if (layer.kind !== 'image' || !layer.visible) continue;
+      ensureImage(layer.src);
+      const bmp = getBitmap(layer.src);
+      if (!bmp) continue;
+      const dw = layer.w * layer.scale;
+      const dh = layer.h * layer.scale;
+      ctx.save();
+      ctx.translate(view.panX, view.panY);
+      ctx.scale(scale, scale);
+      ctx.translate(layer.x, layer.y);
+      ctx.rotate(layer.rotationDeg * deg);
+      ctx.transform(
+        1,
+        Math.tan(layer.skewYDeg * deg),
+        Math.tan(layer.skewXDeg * deg),
+        1,
+        0,
+        0,
+      );
+      ctx.globalAlpha = clamp(layer.opacity, 0, 1);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh);
+      ctx.restore();
+    }
 
-      // transform box + handles (screen space), only with the Image tool active
-      if (tool === 'reference') {
+    // transform box + handles for the image being edited (screen space)
+    {
+      const edited = design.layers.find(
+        (l): l is ImageLayer => l.kind === 'image' && l.id === editingImage,
+      );
+      if (edited && tool === 'reference') {
         const { corners, edges, rot } = refHandles(
-          reference,
+          edited,
           view.panX,
           view.panY,
           scale,
@@ -399,8 +434,51 @@ export default function LoomCanvas() {
     const px = (c: number) => view.panX + c * scale;
     const py = (r: number) => view.panY + r * cellH;
 
-    // selection marquee
-    if (selection) {
+    // Selburose layers are already in the composite; draw the selection box.
+    if (selectedSelburoseId) {
+      const sel = starById(design, selectedSelburoseId);
+      if (sel) {
+        const b = selburoseGridBBox(sel);
+        ctx.save();
+        ctx.strokeStyle = '#1268ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(
+          px(b.minX),
+          py(b.minY),
+          (b.maxX - b.minX) * scale,
+          (b.maxY - b.minY) * cellH,
+        );
+        ctx.restore();
+      }
+    }
+
+    // selection: a wand mask draws the region outline, otherwise a rect marquee
+    if (selection && selectionMask) {
+      ctx.save();
+      const has = (c: number, r: number) => selectionMask.has(r * cols + c);
+      ctx.fillStyle = 'rgba(18,104,255,0.12)';
+      for (let r = selection.r0; r <= selection.r1; r++)
+        for (let c = selection.c0; c <= selection.c1; c++)
+          if (has(c, r)) ctx.fillRect(px(c), py(r), scale + 0.5, cellH + 0.5);
+      ctx.beginPath();
+      for (let r = selection.r0; r <= selection.r1; r++) {
+        for (let c = selection.c0; c <= selection.c1; c++) {
+          if (!has(c, r)) continue;
+          const x = px(c);
+          const y = py(r);
+          if (!has(c - 1, r)) { ctx.moveTo(x, y); ctx.lineTo(x, y + cellH); }
+          if (!has(c + 1, r)) { ctx.moveTo(x + scale, y); ctx.lineTo(x + scale, y + cellH); }
+          if (!has(c, r - 1)) { ctx.moveTo(x, y); ctx.lineTo(x + scale, y); }
+          if (!has(c, r + 1)) { ctx.moveTo(x, y + cellH); ctx.lineTo(x + scale, y + cellH); }
+        }
+      }
+      ctx.strokeStyle = '#1268ff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.stroke();
+      ctx.restore();
+    } else if (selection) {
       const x = px(selection.c0);
       const y = py(selection.r0);
       const w = (selection.c1 - selection.c0 + 1) * scale;
@@ -482,6 +560,7 @@ export default function LoomCanvas() {
       (tool === 'pen' ||
         tool === 'eraser' ||
         tool === 'fill' ||
+        tool === 'wand' ||
         tool === 'eyedropper')
     ) {
       ctx.save();
@@ -499,6 +578,7 @@ export default function LoomCanvas() {
     size.w,
     size.h,
     selection,
+    selectionMask,
     drag,
     settings,
     highlightRow,
@@ -507,8 +587,9 @@ export default function LoomCanvas() {
     pasteMode,
     cursor,
     tool,
-    reference,
+    editingImage,
     refNonce,
+    selectedSelburoseId,
   ]);
 
   // ---- pointer handlers ------------------------------------------------
@@ -546,10 +627,13 @@ export default function LoomCanvas() {
     const d = S().design;
     const inb = c >= 0 && r >= 0 && c < d.loom.columns && r < d.loom.rows;
 
-    // reference tool: transform the placed image via its on-canvas handles
+    // reference tool: transform the edited image layer via its on-canvas handles
     if (tool === 'reference') {
-      const ref = S().reference;
-      if (!ref || !ref.visible) return;
+      const ref = d.layers.find(
+        (l): l is ImageLayer =>
+          l.kind === 'image' && l.id === S().editingImage && l.visible,
+      );
+      if (!ref) return;
       const rect = canvasRef.current!.getBoundingClientRect();
       const vv = S().view;
       const sc = PX_PER_COL * vv.zoom;
@@ -573,8 +657,9 @@ export default function LoomCanvas() {
             ? -1
             : 1;
       }
-      const live = ref.live;
+      S().pushHistory();
       refGesture.current = {
+        id: ref.id,
         mode,
         edge,
         gx0: g.gx,
@@ -585,12 +670,7 @@ export default function LoomCanvas() {
         rot0: ref.rotationDeg,
         d0: Math.max(1e-3, Math.hypot(g.gx - ref.x, g.gy - ref.y)),
         ang0: Math.atan2(g.gy - ref.y, g.gx - ref.x),
-        base: live ? S().design.cells.data.map((row) => row.slice()) : null,
-        labs: live
-          ? paletteLabs(S().design.palette.colors.map((c) => c.hex))
-          : [],
       };
-      if (live) S().pushHistory();
       return;
     }
 
@@ -632,14 +712,56 @@ export default function LoomCanvas() {
         S().bucketFill(c, r);
         break;
       }
+      case 'wand': {
+        if (inb) S().selectWand(c, r);
+        else {
+          S().setSelection(null);
+        }
+        break;
+      }
       case 'eyedropper': {
+        const g = toCellF(e.clientX, e.clientY);
+        const stars = visibleStars(d);
+        const hit = hitSelburose(stars, g.cx, g.cy);
+        if (hit) {
+          const o = stars.find((x) => x.id === hit)!;
+          S().setActiveColor(o.colorIndex);
+          break;
+        }
         if (inb) S().pickAt(c, r);
+        break;
+      }
+      case 'select': {
+        const g = toCellF(e.clientX, e.clientY);
+        const stars = visibleStars(d);
+        const hit = hitSelburose(stars, g.cx, g.cy);
+        if (hit) {
+          const now = Date.now();
+          if (
+            lastTap.current &&
+            lastTap.current.id === hit &&
+            now - lastTap.current.t < 350
+          ) {
+            lastTap.current = null;
+            S().selectSelburose(hit);
+            S().openSelburoseEditor(hit);
+            return;
+          }
+          lastTap.current = { id: hit, t: now };
+          const o = stars.find((x) => x.id === hit)!;
+          S().selectSelburose(hit);
+          S().pushHistory();
+          objDrag.current = { id: hit, gx0: g.cx, gy0: g.cy, ox: o.cx, oy: o.cy };
+          return;
+        }
+        S().selectSelburose(null);
+        anchor.current = { c, r };
+        setDrag({ mode: 'select', ax: c, ay: r, bx: c, by: r });
         break;
       }
       case 'line':
       case 'rect':
-      case 'rectFill':
-      case 'select': {
+      case 'rectFill': {
         anchor.current = { c, r };
         setDrag({ mode: tool as Drag['mode'], ax: c, ay: r, bx: c, by: r });
         break;
@@ -678,10 +800,12 @@ export default function LoomCanvas() {
     if (refGesture.current) {
       const g = refGesture.current;
       const p = toGridUnits(e.clientX, e.clientY);
-      const ref = S().reference;
+      const ref = S().design.layers.find(
+        (l): l is ImageLayer => l.kind === 'image' && l.id === g.id,
+      );
       if (!ref) return;
 
-      let patch: Partial<ReferenceImage> = {};
+      let patch: Partial<ImageLayer> = {};
       if (g.mode === 'move') {
         patch = { x: g.x0 + (p.gx - g.gx0), y: g.y0 + (p.gy - g.gy0) };
       } else if (g.mode === 'scale') {
@@ -709,29 +833,7 @@ export default function LoomCanvas() {
           patch = { skewYDeg: clamp((Math.atan(by) * 180) / Math.PI, -70, 70) };
         }
       }
-      S().updateReference(patch);
-
-      // live re-trace from the pre-gesture grid (throttled)
-      if (g.base && g.labs.length && !refTraceRaf.current) {
-        refTraceRaf.current = true;
-        requestAnimationFrame(() => {
-          refTraceRaf.current = false;
-          const r = S().reference;
-          if (!r || !g.base) return;
-          const { columns, rows, cellAspect } = S().design.loom;
-          S().replaceGrid(
-            traceReferenceGrid(
-              g.base,
-              r,
-              g.labs,
-              columns,
-              rows,
-              cellAspect,
-              r.coveredOnly,
-            ),
-          );
-        });
-      }
+      S().updateImageLayer(g.id, patch);
       return;
     }
 
@@ -741,6 +843,19 @@ export default function LoomCanvas() {
       panLast.current = { x: e.clientX, y: e.clientY };
       const v = S().view;
       S().setView({ panX: v.panX + dx, panY: v.panY + dy });
+      return;
+    }
+
+    if (objDrag.current) {
+      const od = objDrag.current;
+      const g = toCellF(e.clientX, e.clientY);
+      const o = starById(S().design, od.id);
+      const m = o?.center ?? 'cell';
+      S().moveSelburose(
+        od.id,
+        snapSelburoseCenter(od.ox + (g.cx - od.gx0), m),
+        snapSelburoseCenter(od.oy + (g.cy - od.gy0), m),
+      );
       return;
     }
 
@@ -780,6 +895,11 @@ export default function LoomCanvas() {
     panLast.current = null;
     refGesture.current = null;
 
+    if (objDrag.current) {
+      objDrag.current = null;
+      return;
+    }
+
     if (painting.current) {
       painting.current = false;
       lastCell.current = null;
@@ -816,44 +936,6 @@ export default function LoomCanvas() {
     }
   };
 
-  // ---- edge resize handles ------------------------------------------
-  const onHandleDown = (axis: 'cols' | 'rows') => (e: React.PointerEvent) => {
-    e.stopPropagation();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    S().pushHistory();
-    resizing.current = axis;
-  };
-  const onHandleMove = (e: React.PointerEvent) => {
-    if (!resizing.current) return;
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const v = S().view;
-    if (resizing.current === 'cols') {
-      const n = Math.round((e.clientX - rect.left - v.panX) / (PX_PER_COL * v.zoom));
-      S().setColumns(clamp(n, 1, 400));
-    } else {
-      const n = Math.round(
-        (e.clientY - rect.top - v.panY) / (PX_PER_COL * v.zoom * asp),
-      );
-      S().setRows(clamp(n, 1, 1000));
-    }
-  };
-  const onHandleUp = (e: React.PointerEvent) => {
-    try {
-      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
-    }
-    resizing.current = null;
-  };
-
-  const cellH = scale * asp;
-  const gridRight = view.panX + design.loom.columns * scale;
-  const gridBottom = view.panY + design.loom.rows * cellH;
-  const gridTop = clamp(view.panY, 0, size.h);
-  const gridLeft = clamp(view.panX, 0, size.w);
-  const gridVisH = clamp(gridBottom, 0, size.h) - gridTop;
-  const gridVisW = clamp(gridRight, 0, size.w) - gridLeft;
-
   return (
     <div
       className="canvas-wrap"
@@ -868,37 +950,64 @@ export default function LoomCanvas() {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       />
-
-      {gridRight > -40 && gridRight < size.w + 40 && gridVisH > 20 && (
-        <div
-          className="edge-handle right"
-          style={{ left: gridRight - 11, top: gridTop, height: gridVisH }}
-          onPointerDown={onHandleDown('cols')}
-          onPointerMove={onHandleMove}
-          onPointerUp={onHandleUp}
-          onPointerCancel={onHandleUp}
-          title="Drag to add / remove columns"
-        >
-          <span className="pip">
-            {resizing.current === 'cols' ? design.loom.columns : '⋮'}
-          </span>
-        </div>
-      )}
-      {gridBottom > -40 && gridBottom < size.h + 40 && gridVisW > 20 && (
-        <div
-          className="edge-handle bottom"
-          style={{ top: gridBottom - 11, left: gridLeft, width: gridVisW }}
-          onPointerDown={onHandleDown('rows')}
-          onPointerMove={onHandleMove}
-          onPointerUp={onHandleUp}
-          onPointerCancel={onHandleUp}
-          title="Drag to add / remove rows"
-        >
-          <span>{resizing.current === 'rows' ? design.loom.rows : '⋯'}</span>
-        </div>
-      )}
     </div>
   );
+}
+
+function selburoseParams(o: SelburoseObject) {
+  return {
+    cx: o.cx,
+    cy: o.cy,
+    outerR: o.size,
+    rotationDeg: o.rotationDeg,
+    gap: o.gap,
+  };
+}
+
+/** Stars from visible selburose layers, bottom → top. */
+function visibleStars(design: BeadDesign): SelburoseObject[] {
+  const out: SelburoseObject[] = [];
+  for (const l of design.layers)
+    if (l.kind === 'selburose' && l.visible) out.push(l.star);
+  return out;
+}
+
+function starById(design: BeadDesign, id: string): SelburoseObject | undefined {
+  const l = design.layers.find((x) => x.kind === 'selburose' && x.id === id);
+  return l && l.kind === 'selburose' ? l.star : undefined;
+}
+
+function selburoseGridBBox(o: SelburoseObject) {
+  const quads = selburoseParallelograms(selburoseParams(o));
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const q of quads)
+    for (const [x, y] of q) {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+  return { minX, minY, maxX, maxY };
+}
+
+/** Topmost object whose body — or central hole — is under the point. */
+function hitSelburose(
+  objs: SelburoseObject[],
+  gx: number,
+  gy: number,
+): string | null {
+  for (let i = objs.length - 1; i >= 0; i--) {
+    const o = objs[i];
+    const quads = selburoseParallelograms(selburoseParams(o));
+    if (quads.some((q) => pointInPolygon(gx, gy, q))) return o.id;
+    // the central hole reads as part of the star: allow grabbing it there
+    const hole = selburoseInsetShift(o.gap) + 0.75;
+    if (Math.hypot(gx - o.cx, gy - o.cy) <= hole) return o.id;
+  }
+  return null;
 }
 
 function rectCells(

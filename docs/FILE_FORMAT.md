@@ -47,32 +47,56 @@ Two JSON formats, both plain UTF-8 text and safe to hand-edit.
 
   "background": "#FFFFFF",   // drawn behind every empty cell
 
-  "cells": {
-    "encoding": "rows-index",  // the only encoding in v1
-    "empty": -1,               // sentinel for "no bead here"
-    "data": [
-      [ 0, 0, 2, 2, -1, 3, 3, … ],   // row 1 — exactly loom.columns entries
-      [ 0, 2, 2, 3, -1, -1, 3, … ],  // row 2
-      …                              // exactly loom.rows rows, top → bottom
-    ]
-  }
+  // The layer stack, bottom → top. Composited for display and export.
+  "layers": [
+    {
+      "id": "l1", "kind": "raster", "name": "Layer 1", "visible": true,
+      "data": [
+        [ 0, 0, 2, 2, -1, 3, 3, … ],  // row 1 — exactly loom.columns entries
+        [ 0, 2, 2, 3, -1, -1, 3, … ], // …loom.rows rows; -1 = transparent
+      ]
+    },
+    {
+      "id": "sel1", "kind": "selburose", "name": "Selburose 1", "visible": true,
+      "star": {
+        "cx": 50, "cy": 12,     // centre in cell units (fractional allowed)
+        "size": 9,              // tip radius, in cells (square grid; half the star's height)
+        "rotationDeg": 0,       // 0 = the star stands on two points
+        "gap": 0.5,             // per-edge inset of each parallelogram (apparent gap = 2×)
+        "coverage": 0.5,        // 0..1 — fraction of a cell the shape must cover
+        "center": "cell",       // "cell" (middle bead) | "border" (mirror axis between beads)
+        "mode": "fill",         // "fill" | "outline"
+        "colorIndex": 3         // index into palette.colors
+      }
+    }
+  ],
+
+  "cells": { "encoding": "rows-index", "empty": -1, "data": [ … ] }
+  // ^ derived, read-only mirror of the flattened visible stack
 }
 ```
 
 ### Rules & guarantees
 
-- **Cell values** are 0-based integer indices into `palette.colors`, or `-1`
-  (`cells.empty`) for an empty cell. `data[r][c]` = row `r` (from the top),
-  column `c` (from the left).
+- **The layer stack is authoritative.** `layers` is an ordered list, bottom → top.
+  A `raster` layer carries its own `data` grid (`-1` = transparent); a `selburose`
+  layer carries a live `star` and is never baked into pixels until "Flatten to
+  beads" converts it to a raster layer. Higher layers win where cells overlap.
+- **`cells`** in the serialized file is a *derived*, read-only mirror of the
+  flattened visible composite — kept for older readers and external tooling. On
+  load it is ignored when `layers` is present.
+- **Cell values** are 0-based integer indices into `palette.colors`, or `-1` for
+  an empty cell. `data[r][c]` = row `r` (from the top), column `c` (from the left).
 - **Palette order is authoritative.** Reordering or deleting colours in the app
-  rewrites every affected index so the picture is preserved. If you hand-edit the
-  palette, make sure indices still line up.
+  rewrites every affected index (in every raster layer and every star) so the
+  picture is preserved.
 - **Colours** are `#RRGGBB` (upper-cased on save). `name` is required, `code`
   (a bead product reference such as a Miyuki Delica `DB-` number) is optional.
 - **Forgiving import.** On load the app clamps `columns`/`rows` to sane bounds,
-  pads/trims `cells.data` to match, drops out-of-range indices to `-1`, and
-  fills in missing `meta`. A file that only has `format`, `loom`, `palette` and
-  `cells` will still open.
+  pads/trims every layer's grid to match, drops out-of-range indices to `-1`, and
+  fills in missing `meta`. A legacy file with only `format`, `loom`, `palette`,
+  `cells` (and optionally `selburoses`) opens as a single "Background" raster
+  layer plus one layer per star.
 - **Round-trips losslessly** for anything the app itself produces.
 
 ---

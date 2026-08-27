@@ -7,7 +7,6 @@ import {
   openFileMenu,
   paletteHexes,
   pickTool,
-  PX_PER_COL,
   snapshot,
   tapCell,
   toolButton,
@@ -113,6 +112,32 @@ test('marquee select -> copy -> paste duplicates a block elsewhere', async ({ pa
   expect(await cellValue(page, 12, 12)).toBe(7);
 });
 
+test('magic wand selects a contiguous region and deletes just that shape', async ({
+  page,
+}) => {
+  // a filled 4x4 block of colour 2, plus one stray bead of colour 5 outside it
+  await page.locator('.swatch').nth(2).click();
+  await pickTool(page, 'Box+');
+  await dragCells(page, [4, 4], [7, 7]);
+  await page.locator('.swatch').nth(5).click();
+  await pickTool(page, 'Pen');
+  await tapCell(page, 10, 4);
+  expect((await snapshot(page)).beads).toBe(17);
+
+  // wand-click inside the block selects exactly the 16 matching cells
+  await pickTool(page, 'Wand');
+  await tapCell(page, 5, 5);
+  let s = await snapshot(page);
+  expect(s.selection).toMatchObject({ c0: 4, r0: 4, c1: 7, r1: 7 });
+
+  // delete removes only the wand region; the stray bead survives
+  await toolButton(page, 'Delete').click();
+  s = await snapshot(page);
+  expect(s.beads).toBe(1);
+  expect(await cellValue(page, 5, 5)).toBe(-1);
+  expect(await cellValue(page, 10, 4)).toBe(5);
+});
+
 test('mirror horizontal flips the whole design', async ({ page }) => {
   await pickTool(page, 'Pen');
   await tapCell(page, 2, 5);
@@ -154,24 +179,6 @@ test('column count is adjustable from the top bar', async ({ page }) => {
   await input.blur();
   expect((await snapshot(page)).columns).toBe(32);
   await expect(page.locator('.statusbar')).toContainText('32');
-});
-
-test('columns can be dragged from the grid edge handle', async ({ page }) => {
-  const before = await snapshot(page);
-  const handle = page.locator('.edge-handle.right');
-  const box = await handle.boundingBox();
-  expect(box).not.toBeNull();
-  const scale = PX_PER_COL * before.view.zoom;
-  const cx = box!.x + box!.width / 2;
-  const cy = box!.y + box!.height / 2;
-  await page.mouse.move(cx, cy);
-  await page.mouse.down();
-  await page.mouse.move(cx + 3 * scale, cy, { steps: 12 });
-  await page.mouse.up();
-
-  const after = await snapshot(page);
-  expect(after.columns).toBeGreaterThanOrEqual(before.columns + 2);
-  expect(after.columns).toBeLessThanOrEqual(before.columns + 4);
 });
 
 test('save to a slot, start a new design, then reopen the saved one', async ({ page }) => {

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
-import Modal from './Modal';
 import { Icon } from './icons';
 import {
   CONWAY,
@@ -10,6 +9,12 @@ import {
   randomSeed,
   type StepOptions,
 } from '../lib/life';
+import { activeRasterGrid } from '../lib/layers';
+
+const activeGrid = () => {
+  const s = useStore.getState();
+  return activeRasterGrid(s.design, s.activeLayer);
+};
 
 export default function LifeDialog({ onClose }: { onClose: () => void }) {
   const replaceGrid = useStore((s) => s.replaceGrid);
@@ -22,7 +27,7 @@ export default function LifeDialog({ onClose }: { onClose: () => void }) {
   const [density, setDensity] = useState(0.3);
   const [running, setRunning] = useState(false);
   const [gen, setGen] = useState(0);
-  const [live, setLive] = useState(() => countLive(useStore.getState().design.cells.data));
+  const [live, setLive] = useState(() => countLive(activeGrid()));
 
   const rule = useMemo(() => parseRule(ruleText), [ruleText]);
   const timer = useRef<number | null>(null);
@@ -36,7 +41,7 @@ export default function LifeDialog({ onClose }: { onClose: () => void }) {
 
   const advance = (withHistory: boolean) => {
     const r = rule ?? CONWAY;
-    const cur = useStore.getState().design.cells.data;
+    const cur = activeGrid();
     const next = lifeStep(cur, r, options());
     if (withHistory) pushHistory();
     replaceGrid(next);
@@ -95,14 +100,14 @@ export default function LifeDialog({ onClose }: { onClose: () => void }) {
     pushHistory();
     replaceGrid(randomSeed(columns, rows, density, useStore.getState().activeColor));
     setGen(0);
-    setLive(countLive(useStore.getState().design.cells.data));
+    setLive(countLive(activeGrid()));
   };
 
   return (
-    <Modal title="Game of Life" onClose={() => { stop(); onClose(); }}>
+    <div className="dock-panel life-panel">
       <p className="hint">
-        Evolves the pattern with cellular-automaton rules. A cell with any bead is
-        “alive”. Runs mutate the grid — undo to step back.
+        Evolves the active layer with cellular-automaton rules. A cell with any
+        bead is “alive”. Runs mutate the layer — undo to step back.
       </p>
 
       <div className="row2">
@@ -177,6 +182,6 @@ export default function LifeDialog({ onClose }: { onClose: () => void }) {
           Done
         </button>
       </div>
-    </Modal>
+    </div>
   );
 }

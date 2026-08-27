@@ -21,6 +21,7 @@ export interface BaseOpts {
 export function drawBase(
   ctx: CanvasRenderingContext2D,
   design: BeadDesign,
+  grid: number[][],
   view: View,
   cssW: number,
   cssH: number,
@@ -30,7 +31,7 @@ export function drawBase(
   const { scale, offX, offY } = view;
   const cellH = scale * asp;
   const colors = design.palette.colors;
-  const data = design.cells.data;
+  const data = grid;
 
   ctx.clearRect(0, 0, cssW, cssH);
 
@@ -71,7 +72,7 @@ export function drawBase(
     ctx.lineWidth = 1;
     for (let c = c0; c <= c1 + 1; c++) {
       const x = Math.round(offX + c * scale) + 0.5;
-      ctx.strokeStyle = c % 10 === 0 ? 'rgba(0,0,0,0.34)' : 'rgba(0,0,0,0.13)';
+      ctx.strokeStyle = c % 5 === 0 ? 'rgba(0,0,0,0.34)' : 'rgba(0,0,0,0.13)';
       ctx.beginPath();
       ctx.moveTo(x, offY);
       ctx.lineTo(x, offY + rows * cellH);
@@ -79,7 +80,7 @@ export function drawBase(
     }
     for (let r = r0; r <= r1 + 1; r++) {
       const y = Math.round(offY + r * cellH) + 0.5;
-      ctx.strokeStyle = r % 10 === 0 ? 'rgba(0,0,0,0.34)' : 'rgba(0,0,0,0.13)';
+      ctx.strokeStyle = r % 5 === 0 ? 'rgba(0,0,0,0.34)' : 'rgba(0,0,0,0.13)';
       ctx.beginPath();
       ctx.moveTo(offX, y);
       ctx.lineTo(offX + cols * scale, y);

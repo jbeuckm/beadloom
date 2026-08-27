@@ -6,15 +6,7 @@ import { Icon } from './icons';
 import { downloadText, exportPNG, pickTextFile } from '../lib/designFormat';
 import * as storage from '../lib/storage';
 
-export type DialogId =
-  | 'new'
-  | 'open'
-  | 'saveas'
-  | 'resize'
-  | 'help'
-  | 'life'
-  | 'selburose'
-  | 'reference';
+export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help';
 
 /** Press-and-hold auto-repeat for the ± steppers, with one history entry per hold. */
 function useHoldRepeat(step: () => void, onStart?: () => void) {
@@ -182,17 +174,6 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
             <div className="menu-sep" />
             <MenuItem onClick={() => onDialog('resize')} close={close}>
               ◆ Resize Grid…
-            </MenuItem>
-            <div className="menu-sep" />
-            <div className="menu-label">Generate</div>
-            <MenuItem onClick={() => onDialog('selburose')} close={close}>
-              ✶ Selburose…
-            </MenuItem>
-            <MenuItem onClick={() => onDialog('life')} close={close}>
-              ▦ Game of Life…
-            </MenuItem>
-            <MenuItem onClick={() => onDialog('reference')} close={close}>
-              ⌗ Reference Image…
             </MenuItem>
             <div className="menu-sep" />
             <MenuItem

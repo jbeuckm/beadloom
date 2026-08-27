@@ -9,19 +9,29 @@ export async function snapshot(page: Page) {
   return page.evaluate(() => {
     // @ts-expect-error injected by src/main.tsx in dev
     const s = window.__beadloom.getState();
+    // @ts-expect-error injected
+    const grid = window.__beadloomComposite();
     let beads = 0;
     const used = new Set<number>();
-    for (const row of s.design.cells.data)
+    for (const row of grid)
       for (const v of row)
         if (v >= 0) {
           beads++;
           used.add(v);
         }
+    const selburoseLayers = s.design.layers.filter(
+      (l: any) => l.kind === 'selburose',
+    );
+    let rasterBeads = 0;
+    for (const l of s.design.layers)
+      if (l.kind === 'raster')
+        for (const row of l.data) for (const v of row) if (v >= 0) rasterBeads++;
     return {
       columns: s.design.loom.columns,
       rows: s.design.loom.rows,
       cellAspect: s.design.loom.cellAspect,
       beads,
+      rasterBeads,
       coloursUsed: used.size,
       paletteSize: s.design.palette.colors.length,
       paletteName: s.design.palette.name,
@@ -32,24 +42,38 @@ export async function snapshot(page: Page) {
       selection: s.selection,
       hasClipboard: !!s.clipboard,
       clipboard: s.clipboard ? { w: s.clipboard.w, h: s.clipboard.h } : null,
-      reference: s.reference
-        ? {
-            w: s.reference.w,
-            h: s.reference.h,
-            x: s.reference.x,
-            y: s.reference.y,
-            scale: s.reference.scale,
-            rotationDeg: s.reference.rotationDeg,
-            skewXDeg: s.reference.skewXDeg,
-            skewYDeg: s.reference.skewYDeg,
-            opacity: s.reference.opacity,
-            visible: s.reference.visible,
-            live: s.reference.live,
-            coveredOnly: s.reference.coveredOnly,
-          }
-        : null,
       highlightRow: s.highlightRow,
       settings: s.settings,
+      layers: s.design.layers.map((l: any) => ({
+        id: l.id,
+        kind: l.kind,
+        name: l.name,
+        visible: l.visible,
+      })),
+      activeLayer: s.activeLayer,
+      selburoses: selburoseLayers.map((l: any) => ({ ...l.star })),
+      imageLayers: s.design.layers
+        .filter((l: any) => l.kind === 'image')
+        .map((l: any) => ({
+          id: l.id,
+          name: l.name,
+          visible: l.visible,
+          w: l.w,
+          h: l.h,
+          x: l.x,
+          y: l.y,
+          scale: l.scale,
+          rotationDeg: l.rotationDeg,
+          skewXDeg: l.skewXDeg,
+          skewYDeg: l.skewYDeg,
+          opacity: l.opacity,
+          coveredOnly: l.coveredOnly,
+        })),
+      selectedSelburoseId: s.selectedSelburoseId,
+      editingSelburose: s.editingSelburose,
+      selectedImageId: s.selectedImageId,
+      editingImage: s.editingImage,
+      rightPanel: s.rightPanel,
       undo: s.undoStack.length,
       redo: s.redoStack.length,
       name: s.design.meta.name,
@@ -63,7 +87,7 @@ export async function cellValue(page: Page, c: number, r: number): Promise<numbe
   return page.evaluate(
     ({ c, r }) =>
       // @ts-expect-error injected
-      window.__beadloom.getState().design.cells.data[r][c] as number,
+      (window.__beadloomComposite()[r][c] as number),
     { c, r },
   );
 }
@@ -94,13 +118,13 @@ export async function openPaletteLibrary(page: Page): Promise<void> {
   await page.locator('.modal', { hasText: 'Palette Library' }).waitFor();
 }
 
-/** Screen positions of the reference-image transform handles (mirrors LoomCanvas). */
+/** Screen positions of the edited image layer's transform handles (mirrors LoomCanvas). */
 export async function refHandles(page: Page) {
   const box = await page.locator('.canvas-wrap canvas').boundingBox();
   if (!box) throw new Error('canvas not found');
   const s = await snapshot(page);
-  const r = s.reference;
-  if (!r) throw new Error('no reference image');
+  const r = s.imageLayers.find((l) => l.id === s.editingImage);
+  if (!r) throw new Error('no image layer being edited');
   const sc = PX_PER_COL * s.view.zoom;
   const deg = Math.PI / 180;
   const th = r.rotationDeg * deg;

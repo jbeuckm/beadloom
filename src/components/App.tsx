@@ -5,11 +5,13 @@ import LoomCanvas from './LoomCanvas';
 import PalettePanel from './PalettePanel';
 import StatusBar from './StatusBar';
 import Dialogs from './Dialogs';
+import RightDock from './RightDock';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
 
 export default function App() {
   const [dialog, setDialog] = useState<DialogId | null>(null);
+  const rightPanel = useStore((s) => s.rightPanel);
 
   useEffect(() => {
     const isTyping = (t: EventTarget | null) => {
@@ -69,12 +71,16 @@ export default function App() {
         if (s.selection) {
           e.preventDefault();
           s.deleteSelection();
+        } else if (s.selectedSelburoseId) {
+          e.preventDefault();
+          s.removeSelburose(s.selectedSelburoseId);
         }
         return;
       }
       if (e.key === 'Escape') {
         s.setPasteMode(false);
         s.setSelection(null);
+        s.selectSelburose(null);
         return;
       }
 
@@ -88,6 +94,7 @@ export default function App() {
         r: () => s.setTool('rect'),
         f: () => s.setTool('rectFill'),
         m: () => s.setTool('select'),
+        w: () => s.setTool('wand'),
         h: () => s.setTool('pan'),
         k: () => s.setTool('reference'),
         '[': () => s.zoomBy(1 / 1.25),
@@ -106,6 +113,7 @@ export default function App() {
       <TopBar onDialog={setDialog} />
       <div className="body">
         <LoomCanvas />
+        {rightPanel && <RightDock />}
       </div>
       <Toolbar />
       <PalettePanel />

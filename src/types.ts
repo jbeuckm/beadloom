@@ -51,6 +51,67 @@ export interface CellData {
   data: number[][]; // data[row][col]; row.length === loom.columns; data.length === loom.rows
 }
 
+/** A hand-painted plane of beads. */
+export interface RasterLayer {
+  id: string;
+  kind: 'raster';
+  name: string;
+  visible: boolean;
+  data: number[][]; // rows × cols; palette index or EMPTY
+}
+
+/** A live, re-editable Selburose that renders as its own layer. */
+export interface SelburoseLayer {
+  id: string; // === star.id
+  kind: 'selburose';
+  name: string;
+  visible: boolean;
+  star: SelburoseObject;
+}
+
+/**
+ * A placed bitmap that renders as an overlay for tracing. Session-only — `src` is
+ * an object URL, never serialised — and it never touches a bead until the user
+ * flattens it into a raster layer.
+ */
+export interface ImageLayer {
+  id: string;
+  kind: 'image';
+  name: string;
+  visible: boolean;
+  src: string; // session object URL
+  w: number; // natural pixel width
+  h: number; // natural pixel height
+  x: number; // centre, in grid column-units
+  y: number; // centre, in grid column-units (row units scaled by cellAspect)
+  scale: number; // grid column-units per image pixel
+  rotationDeg: number;
+  skewXDeg: number;
+  skewYDeg: number;
+  opacity: number; // 0..1
+  coveredOnly: boolean; // flatten only the cells the image actually covers
+}
+
+export type Layer = RasterLayer | SelburoseLayer | ImageLayer;
+
+/**
+ * A parametric eight-point star placed on the loom as a live, non-destructive
+ * overlay. It is never written into `cells` until the user explicitly flattens it,
+ * and it stays individually selectable and re-editable.
+ */
+export interface SelburoseObject {
+  id: string;
+  cx: number; // centre column (fractional)
+  cy: number; // centre row (fractional)
+  size: number; // tip radius, in columns
+  rotationDeg: number; // 0 == "stands on two points"
+  gap: number; // per-edge inset of each parallelogram, in beads (>= 0); apparent gap = 2×
+  coverage: number; // 0..1 "aliasing" threshold: fraction of a cell that must be covered
+  center: 'cell' | 'border'; // centred on a bead, or on the line between beads
+  mode: 'fill' | 'outline';
+  colorIndex: number; // index into palette.colors, frozen at placement time
+}
+
 export interface BeadDesign {
   format: typeof FORMAT_ID;
   version: number;
@@ -58,7 +119,7 @@ export interface BeadDesign {
   loom: LoomSpec;
   palette: Palette; // every colour used by the design is specified here
   background: string; // "#RRGGBB" painted behind empty cells
-  cells: CellData;
+  layers: Layer[]; // bottom → top; composited for display and export
 }
 
 export interface PaletteFile {
@@ -77,28 +138,11 @@ export type ToolId =
   | 'rectFill'
   | 'select'
   | 'pan'
+  | 'wand'
   | 'reference';
 
-/**
- * A photo/artwork placed behind the grid to trace from. The bitmap itself lives
- * in `lib/referenceImage.ts`; this is only the placement transform. Not written
- * to design files — `src` is a session object URL.
- */
-export interface ReferenceImage {
-  src: string;
-  w: number; // natural pixel width
-  h: number; // natural pixel height
-  x: number; // centre X, in grid columns
-  y: number; // centre Y, in grid columns (row units scaled by cellAspect)
-  scale: number; // grid columns per image pixel
-  rotationDeg: number;
-  skewXDeg: number;
-  skewYDeg: number;
-  opacity: number; // 0..1
-  visible: boolean;
-  live: boolean; // re-trace the grid continuously while the image is transformed
-  coveredOnly: boolean; // trace only cells the image actually covers
-}
+/** The panels that dock to the right edge of the workspace, one at a time. */
+export type RightPanelId = 'reference' | 'selburose' | 'layers' | 'life';
 
 /** Inclusive, normalised cell rectangle. */
 export interface Rect {
@@ -127,6 +171,7 @@ export interface Snapshot {
   loom: LoomSpec;
   palette: Palette;
   background: string;
-  data: number[][];
+  layers: Layer[];
+  activeLayer: string;
   activeColor: number;
 }

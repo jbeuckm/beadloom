@@ -1,128 +1,173 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import Modal from './Modal';
-import { starCells, starVertices, type StarParams } from '../lib/shapes';
+import { snapSelburoseCenter } from '../lib/shapes';
+import type { SelburoseObject } from '../types';
 
-export default function SelburoseDialog({ onClose }: { onClose: () => void }) {
-  const { columns, rows, cellAspect } = useStore((s) => s.design.loom);
-  const activeColor = useStore((s) => s.activeColor);
-  const paintCells = useStore((s) => s.paintCells);
-  const pushHistory = useStore((s) => s.pushHistory);
-  const swatch = useStore(
-    (s) => s.design.palette.colors[s.activeColor]?.hex ?? '#1268ff',
-  );
+// The height control is the star's tip-to-tip span in cells; geometry uses an
+// outer radius (cells, square grid), so it is just half the height.
+const outerToHeight = (r: number) => Math.round(2 * r);
+const heightToOuter = (h: number) => h / 2;
 
-  const [points, setPoints] = useState(8);
-  const [size, setSize] = useState(Math.max(3, Math.round(Math.min(columns, rows / cellAspect) / 3)));
-  const [separation, setSeparation] = useState(0.62);
-  const [rotation, setRotation] = useState(0);
-  const [cx, setCx] = useState(Math.round(columns / 2));
-  const [cy, setCy] = useState(Math.round(rows / 2));
-  const [mode, setMode] = useState<'fill' | 'outline'>('fill');
-
-  const ratio = 1 - 0.85 * separation;
-
-  const params = (cxv: number, cyv: number, asp: number): StarParams => ({
-    cx: cxv,
-    cy: cyv,
-    points,
-    outerR: size,
-    ratio,
-    rotationDeg: rotation,
-    aspect: asp,
+export default function SelburoseDialog() {
+  const { columns, rows } = useStore((s) => s.design.loom);
+  const editingId = useStore((s) => s.editingSelburose);
+  const star = useStore((s) => {
+    if (!s.editingSelburose) return null;
+    const l = s.design.layers.find(
+      (x) => x.kind === 'selburose' && x.id === s.editingSelburose,
+    );
+    return l && l.kind === 'selburose' ? l.star : null;
   });
 
-  const previewPts = useMemo(() => {
-    const pv = starVertices(params(50, 50, cellAspect));
-    // fit the raw vertices into a 0..100 box
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const [x, y] of pv) {
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-    }
-    const s = 92 / Math.max(maxX - minX, maxY - minY, 1);
-    return pv
-      .map(([x, y]) => `${4 + (x - minX) * s},${4 + (y - minY) * s}`)
-      .join(' ');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [points, ratio, rotation, cellAspect]);
+  const updateSelburose = useStore((s) => s.updateSelburose);
+  const removeSelburose = useStore((s) => s.removeSelburose);
+  const flattenSelburose = useStore((s) => s.flattenSelburose);
+  const pushHistory = useStore((s) => s.pushHistory);
+  const close = useStore((s) => s.closeSelburoseEditor);
 
-  const insert = () => {
-    const cells = starCells(params(cx, cy, cellAspect), columns, rows, mode);
-    if (!cells.length) return;
-    pushHistory();
-    paintCells(cells, activeColor);
-    onClose();
+  // The object was deleted out from under the panel — just close.
+  useEffect(() => {
+    if (!star) close();
+  }, [star, close]);
+
+  // One undo checkpoint the first time this star is edited in the panel.
+  const dirtied = useRef<string | null>(null);
+  const edit = (patch: Partial<SelburoseObject>) => {
+    if (!star) return;
+    if (dirtied.current !== star.id) {
+      pushHistory();
+      dirtied.current = star.id;
+    }
+    updateSelburose(star.id, patch);
   };
 
+  if (!star) return null;
+
+  const maxHeight = Math.max(6, Math.round(Math.max(rows, columns) * 1.4));
+  const height = outerToHeight(star.size);
+  const setCenter = (c: 'cell' | 'border') =>
+    edit({
+      center: c,
+      cx: snapSelburoseCenter(star.cx, c),
+      cy: snapSelburoseCenter(star.cy, c),
+    });
+
   return (
-    <Modal title="Selburose" onClose={onClose}>
+    <div className="dock-panel selburose-panel" key={editingId ?? ''}>
       <p className="hint">
-        A parametric star / rose. Higher separation = sharper, more distinct
-        petals. Inserts with the active colour.
+        An eight-point star built from eight parallelograms. Drag it on the canvas
+        with the Select tool; changes here apply to it live.
       </p>
 
-      <div className="selburose-body">
-        <svg className="selburose-preview" viewBox="0 0 100 100" aria-hidden="true">
-          <polygon
-            points={previewPts}
-            fill={mode === 'fill' ? swatch : 'none'}
-            stroke={swatch}
-            strokeWidth={mode === 'fill' ? 0 : 3}
-            strokeLinejoin="round"
+      <div className="field">
+        <label>Height — {height} rows</label>
+        <input
+          type="range"
+          min={3}
+          max={maxHeight}
+          value={height}
+          onChange={(e) => edit({ size: heightToOuter(Number(e.target.value)) })}
+        />
+      </div>
+      <div className="field">
+        <label>
+          Gap — {star.gap.toFixed(1)} in ({(star.gap * 2).toFixed(1)}-bead channel)
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={4}
+          step={0.1}
+          value={star.gap}
+          onChange={(e) => edit({ gap: Number(e.target.value) })}
+        />
+      </div>
+      <div className="field">
+        <label>Rotation — {star.rotationDeg}°</label>
+        <input
+          type="range"
+          min={-180}
+          max={180}
+          value={star.rotationDeg}
+          onChange={(e) => edit({ rotationDeg: Number(e.target.value) })}
+        />
+      </div>
+      <div className="field">
+        <label>Aliasing — {Math.round(star.coverage * 100)}%</label>
+        <input
+          type="range"
+          min={5}
+          max={100}
+          value={Math.round(star.coverage * 100)}
+          onChange={(e) => edit({ coverage: Number(e.target.value) / 100 })}
+        />
+      </div>
+
+      <fieldset className="selburose-align">
+        <legend>Alignment</legend>
+        <label className="check">
+          <input
+            type="radio"
+            name="selburose-align"
+            checked={star.center === 'cell'}
+            onChange={() => setCenter('cell')}
           />
-        </svg>
+          Center
+        </label>
+        <label className="check">
+          <input
+            type="radio"
+            name="selburose-align"
+            checked={star.center === 'border'}
+            onChange={() => setCenter('border')}
+          />
+          Edge
+        </label>
+      </fieldset>
 
-        <div className="selburose-controls">
-          <div className="field">
-            <label>Petals — {points}</label>
-            <input type="range" min={3} max={24} value={points}
-              onChange={(e) => setPoints(Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>Size (radius, columns) — {size}</label>
-            <input type="range" min={2} max={Math.max(4, Math.round(Math.max(columns, rows)))} value={size}
-              onChange={(e) => setSize(Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>Petal separation — {Math.round(separation * 100)}%</label>
-            <input type="range" min={0} max={100} value={Math.round(separation * 100)}
-              onChange={(e) => setSeparation(Number(e.target.value) / 100)} />
-          </div>
-          <div className="field">
-            <label>Rotation — {rotation}°</label>
-            <input type="range" min={-180} max={180} value={rotation}
-              onChange={(e) => setRotation(Number(e.target.value))} />
-          </div>
-          <div className="row2">
-            <div className="field">
-              <label>Centre X</label>
-              <input type="number" min={0} max={columns - 1} value={cx}
-                onChange={(e) => setCx(Number(e.target.value))} />
-            </div>
-            <div className="field">
-              <label>Centre Y</label>
-              <input type="number" min={0} max={rows - 1} value={cy}
-                onChange={(e) => setCy(Number(e.target.value))} />
-            </div>
-          </div>
-          <label className="check">
-            <input type="radio" name="selburose-mode" checked={mode === 'fill'}
-              onChange={() => setMode('fill')} />
-            Filled
-          </label>
-          <label className="check">
-            <input type="radio" name="selburose-mode" checked={mode === 'outline'}
-              onChange={() => setMode('outline')} />
-            Outline
-          </label>
-        </div>
-      </div>
+      <label className="check">
+        <input
+          type="radio"
+          name="selburose-mode"
+          checked={star.mode === 'fill'}
+          onChange={() => edit({ mode: 'fill' })}
+        />
+        Filled
+      </label>
+      <label className="check">
+        <input
+          type="radio"
+          name="selburose-mode"
+          checked={star.mode === 'outline'}
+          onChange={() => edit({ mode: 'outline' })}
+        />
+        Outline
+      </label>
 
-      <div className="actions">
-        <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn primary" onClick={insert}>Insert</button>
+      <div className="actions spread">
+        <button
+          className="btn danger"
+          onClick={() => {
+            removeSelburose(star.id);
+            close();
+          }}
+        >
+          Delete
+        </button>
+        <span className="grow" />
+        <button
+          className="btn"
+          onClick={() => {
+            flattenSelburose(star.id);
+            close();
+          }}
+        >
+          Flatten to beads
+        </button>
+        <button className="btn primary" onClick={close}>
+          Done
+        </button>
       </div>
-    </Modal>
+    </div>
   );
 }

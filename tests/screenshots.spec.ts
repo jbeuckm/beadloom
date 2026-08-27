@@ -4,7 +4,6 @@ import {
   dragCells,
   openFileMenu,
   pickTool,
-  PX_PER_COL,
   snapshot,
   tapCell,
   toolButton,
@@ -19,6 +18,7 @@ const shot = (page: import('@playwright/test').Page, name: string) =>
 test('guided walkthrough with screenshots', async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto('/');
+  page.on('dialog', (d) => d.accept());
   await waitForReady(page);
 
   // 1 — startup -----------------------------------------------------------
@@ -67,19 +67,10 @@ test('guided walkthrough with screenshots', async ({ page }) => {
   await toolButton(page, 'Flip H').click();
   await shot(page, '07-mirror-horizontal');
 
-  // 8 — drag the edge handle to add columns ------------------------
-  {
-    const before = await snapshot(page);
-    const box = await page.locator('.edge-handle.right').boundingBox();
-    const scale = PX_PER_COL * before.view.zoom;
-    const cx = box!.x + box!.width / 2;
-    const cy = box!.y + box!.height / 2;
-    await page.mouse.move(cx, cy);
-    await page.mouse.down();
-    await page.mouse.move(cx + 6 * scale, cy, { steps: 18 });
-    await shot(page, '08-resize-columns-drag');
-    await page.mouse.up();
-  }
+  // 8 — resize the grid from the top-bar column stepper -----------
+  await page.locator('.dim-group', { hasText: 'Cols' }).locator('input').fill('120');
+  await page.locator('.dim-group', { hasText: 'Cols' }).locator('input').blur();
+  await shot(page, '08-resize-columns');
 
   // 9 — the File menu ---------------------------------------------
   await page.getByRole('button', { name: /^File/ }).click();
@@ -140,36 +131,37 @@ test('guided walkthrough with screenshots', async ({ page }) => {
   await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
   await shot(page, '14-toho-palette');
 
-  // 15 — Selburose star generator ------------------------------
-  await openFileMenu(page, /Selburose/);
-  await expect(page.locator('.modal')).toContainText('Selburose');
+  // 15 — Selburose star generator (drops a star + opens the panel) ----
+  await pickTool(page, 'Selburose');
+  await expect(page.locator('.right-dock')).toContainText('Selburose');
   await shot(page, '15-selburose');
-  await page.locator('.modal').getByRole('button', { name: 'Insert' }).click();
-  await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
+  await page.locator('.right-dock').getByRole('button', { name: 'Done' }).click();
   await shot(page, '16-selburose-inserted');
 
   // 17 — Game of Life -----------------------------------------
-  await openFileMenu(page, /Game of Life/);
-  const life = page.locator('.modal', { hasText: 'Game of Life' });
+  await pickTool(page, 'Life');
+  const life = page.locator('.right-dock', { hasText: 'Game of Life' });
   await life.getByRole('button', { name: 'Seed grid' }).click();
   await life.getByRole('button', { name: 'Step' }).click();
   await shot(page, '17-game-of-life');
   await life.getByRole('button', { name: 'Done' }).click();
-  await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
+  await expect(life).toBeHidden();
 
-  // 18 — reference image: on-canvas transform box + live trace ----
+  // 18 — image layer: a placed bitmap with transform handles ----
   await openFileMenu(page, /^\+ New/);
   await page.locator('.modal').getByRole('button', { name: 'Create' }).click();
-  await openFileMenu(page, /Reference Image/);
+  await pickTool(page, 'Image');
   await page
     .locator('.ref-panel input[type="file"]')
     .setInputFiles('tests/fixtures/trace-quad.png');
-  await expect.poll(async () => (await snapshot(page)).reference !== null).toBe(true);
-  await expect.poll(async () => (await snapshot(page)).beads).toBeGreaterThan(100);
-  await shot(page, '18-reference-image');
+  await expect.poll(async () => (await snapshot(page)).imageLayers.length).toBe(1);
+  await page.waitForTimeout(150);
+  await shot(page, '18-image-layer');
 
-  // 19 — palette lifted straight off the image ---------------
+  // 19 — palette lifted off the image, then flattened to beads ---
   await page.locator('.ref-panel .ref-num input').fill('8');
   await page.locator('.ref-panel').getByRole('button', { name: 'Replace palette' }).click();
-  await shot(page, '19-reference-palette');
+  await page.locator('.ref-panel').getByRole('button', { name: 'Flatten to beads' }).click();
+  await expect.poll(async () => (await snapshot(page)).beads).toBeGreaterThan(100);
+  await shot(page, '19-image-flattened');
 });

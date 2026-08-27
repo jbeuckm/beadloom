@@ -11,17 +11,26 @@ import {
   EMPTY,
   FORMAT_ID,
   FORMAT_VERSION,
+  type Layer,
   type Palette,
   PALETTE_FORMAT_ID,
   type PaletteFile,
+  type RasterLayer,
+  type SelburoseObject,
 } from '../types';
 import { emptyGrid } from './grid';
+import { compositeLayers } from './layers';
 import { drawBase } from './render';
-import { normalizeHex } from '../util';
+import { normalizeHex, uid } from '../util';
 
 function clampInt(v: unknown, lo: number, hi: number, dflt: number): number {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
+}
+
+function num(v: unknown, dflt: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : dflt;
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -60,14 +69,80 @@ export function validateDesign(raw: any): BeadDesign {
     colors,
   };
 
-  const src: any[] = Array.isArray(raw?.cells?.data) ? raw.cells.data : [];
-  const data = emptyGrid(cols, rows);
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const v = Number(src[r]?.[c]);
-      data[r][c] = Number.isInteger(v) && v >= 0 && v < colors.length ? v : EMPTY;
-    }
+  const coerceGrid = (src: any): number[][] => {
+    const rowsSrc: any[] = Array.isArray(src) ? src : [];
+    const g = emptyGrid(cols, rows);
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++) {
+        const v = Number(rowsSrc[r]?.[c]);
+        g[r][c] = Number.isInteger(v) && v >= 0 && v < colors.length ? v : EMPTY;
+      }
+    return g;
+  };
+
+  const coerceStar = (o: any, i: number): SelburoseObject => ({
+    id: String(o?.id ?? `sel${i + 1}`),
+    cx: num(o?.cx, cols / 2),
+    cy: num(o?.cy, rows / 2),
+    size: Math.max(0.5, num(o?.size, 6)),
+    rotationDeg: num(o?.rotationDeg, 0),
+    gap: Math.max(0, num(o?.gap, 0.5)),
+    coverage: Math.min(1, Math.max(0.02, num(o?.coverage, 0.5))),
+    center: o?.center === 'border' ? 'border' : 'cell',
+    mode: o?.mode === 'outline' ? 'outline' : 'fill',
+    colorIndex: clampInt(o?.colorIndex, 0, colors.length - 1, 0),
+  });
+
+  let layers: Layer[];
+  if (Array.isArray(raw?.layers)) {
+    layers = raw.layers
+      .filter(
+        (l: any) => l && typeof l === 'object' && l.kind !== 'image', // images are session-only
+      )
+      .map((l: any, i: number): Layer => {
+        const common = {
+          id: String(l.id ?? `l${i + 1}`),
+          name: String(l.name ?? `Layer ${i + 1}`),
+          visible: l.visible !== false,
+        };
+        if (l.kind === 'selburose')
+          return { ...common, kind: 'selburose', star: coerceStar(l.star, i) };
+        return { ...common, kind: 'raster', data: coerceGrid(l.data) };
+      });
+  } else {
+    // legacy shape: a single grid plus a parallel selburose list
+    const base: RasterLayer = {
+      id: uid(),
+      kind: 'raster',
+      name: 'Background',
+      visible: true,
+      data: coerceGrid(raw?.cells?.data),
+    };
+    const rawSel: any[] = Array.isArray(raw?.selburoses) ? raw.selburoses : [];
+    layers = [
+      base,
+      ...rawSel
+        .filter((o) => o && typeof o === 'object')
+        .map((o, i): Layer => {
+          const star = coerceStar(o, i);
+          return {
+            id: star.id,
+            kind: 'selburose',
+            name: `Selburose ${i + 1}`,
+            visible: true,
+            star,
+          };
+        }),
+    ];
   }
+  if (!layers.some((l) => l.kind === 'raster'))
+    layers.unshift({
+      id: uid(),
+      kind: 'raster',
+      name: 'Layer 1',
+      visible: true,
+      data: emptyGrid(cols, rows),
+    });
 
   const now = new Date().toISOString();
   const out: BeadDesign = {
@@ -82,20 +157,25 @@ export function validateDesign(raw: any): BeadDesign {
     loom: { stitch: 'loom', columns: cols, rows, cellAspect: cellAspect },
     palette,
     background: normalizeHex(String(raw?.background ?? '#FFFFFF')) ?? '#FFFFFF',
-    cells: { encoding: 'rows-index', empty: EMPTY, data },
+    layers,
   };
   if (raw?.meta?.notes) out.meta.notes = String(raw.meta.notes);
   return out;
 }
 
 export function serializeDesign(d: BeadDesign): string {
-  const out: BeadDesign = {
+  const out = {
     ...d,
     meta: {
       ...d.meta,
       modified: new Date().toISOString(),
       app: `${APP_NAME} ${APP_VERSION}`,
     },
+    // Image layers hold a session object URL — never persist them.
+    layers: d.layers.filter((l) => l.kind !== 'image'),
+    // Derived, read-only mirror: the flattened visible stack. `layers` is
+    // authoritative on load; `cells` keeps older readers and tooling working.
+    cells: { encoding: 'rows-index', empty: EMPTY, data: compositeLayers(d) },
   };
   return JSON.stringify(out, null, 2);
 }
@@ -177,11 +257,15 @@ export function exportPNG(design: BeadDesign, cellPx = 22): void {
   ctx.scale(dpr, dpr);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, w, h);
-  drawBase(ctx, design, { scale: cellPx, offX: pad, offY: pad }, w, h, {
-    showGrid: true,
-    showRowNumbers: false,
-    highlightRow: null,
-  });
+  drawBase(
+    ctx,
+    design,
+    compositeLayers(design),
+    { scale: cellPx, offX: pad, offY: pad },
+    w,
+    h,
+    { showGrid: true, showRowNumbers: false, highlightRow: null },
+  );
 
   canvas.toBlob((blob) => {
     if (!blob) return;

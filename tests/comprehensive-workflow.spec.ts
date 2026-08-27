@@ -29,6 +29,7 @@ import {
 test('comprehensive: every major feature in a single session', async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto('/');
+  page.on('dialog', (d) => d.accept());
   await waitForReady(page);
 
   // === 1. Loads with loom defaults ========================================
@@ -207,7 +208,7 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
   await page.locator('.bg-row input[type="color"]').fill('#ff8800');
   expect((await snapshot(page)).background).toBe('#FF8800');
 
-  // === 12. Grid resize three ways ==================================
+  // === 12. Grid resize two ways ==================================
   const colInput = page.locator('.dim-group', { hasText: 'Cols' }).locator('input');
   await colInput.fill('50');
   await colInput.blur();
@@ -217,21 +218,6 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
   await rowInput.fill('34');
   await rowInput.blur();
   expect((await snapshot(page)).rows).toBe(34);
-
-  {
-    const before = await snapshot(page);
-    const box = await page.locator('.edge-handle.right').boundingBox();
-    const scale = PX_PER_COL * before.view.zoom;
-    const cx = box!.x + box!.width / 2;
-    const cy = box!.y + box!.height / 2;
-    await page.mouse.move(cx, cy);
-    await page.mouse.down();
-    await page.mouse.move(cx + 4 * scale, cy, { steps: 16 });
-    await page.mouse.up();
-    const after = await snapshot(page);
-    expect(after.columns).toBeGreaterThan(before.columns + 1);
-    expect(after.columns).toBeLessThanOrEqual(before.columns + 6);
-  }
 
   await openFileMenu(page, /Resize Grid/);
   await page.locator('.modal .row2 input[type="number"]').first().fill('50');

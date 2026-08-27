@@ -1,21 +1,24 @@
 import { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { colorUsage, totalBeads } from '../lib/grid';
+import { compositeLayers } from '../lib/layers';
 
 export default function StatusBar() {
   const design = useStore((s) => s.design);
+  const activeLayer = useStore((s) => s.activeLayer);
   const selection = useStore((s) => s.selection);
   const clipboard = useStore((s) => s.clipboard);
   const cursor = useStore((s) => s.cursor);
   const zoom = useStore((s) => s.view.zoom);
 
   const { columns, rows } = design.loom;
-  const data = design.cells.data;
+  const activeName =
+    design.layers.find((l) => l.id === activeLayer)?.name ?? '—';
 
-  const { total, distinct } = useMemo(
-    () => ({ total: totalBeads(data), distinct: colorUsage(data).size }),
-    [data],
-  );
+  const { total, distinct } = useMemo(() => {
+    const g = compositeLayers(design);
+    return { total: totalBeads(g), distinct: colorUsage(g).size };
+  }, [design]);
 
   const inBounds =
     cursor && cursor.c >= 0 && cursor.r >= 0 && cursor.c < columns && cursor.r < rows;
@@ -30,6 +33,9 @@ export default function StatusBar() {
       </span>
       <span>
         <b>{distinct}</b> / {design.palette.colors.length} colours used
+      </span>
+      <span>
+        Layer <b>{activeName}</b>
       </span>
       {selection && (
         <span>

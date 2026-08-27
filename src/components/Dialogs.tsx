@@ -5,9 +5,6 @@ import type { DialogId } from './TopBar';
 import * as storage from '../lib/storage';
 import { pickTextFile } from '../lib/designFormat';
 import { FILE_FORMAT_SPEC, SHORTCUTS } from '../help';
-import LifeDialog from './LifeDialog';
-import SelburoseDialog from './SelburoseDialog';
-import ReferencePanel from './ReferencePanel';
 
 export default function Dialogs({
   which,
@@ -20,9 +17,6 @@ export default function Dialogs({
   if (which === 'resize') return <ResizeDialog onClose={onClose} />;
   if (which === 'saveas') return <SaveAsDialog onClose={onClose} />;
   if (which === 'open') return <OpenDialog onClose={onClose} />;
-  if (which === 'life') return <LifeDialog onClose={onClose} />;
-  if (which === 'selburose') return <SelburoseDialog onClose={onClose} />;
-  if (which === 'reference') return <ReferencePanel onClose={onClose} />;
   return <HelpDialog onClose={onClose} />;
 }
 
@@ -37,10 +31,21 @@ const PRESETS: Array<[number, number]> = [
 
 function NewDialog({ onClose }: { onClose: () => void }) {
   const newDesign = useStore((s) => s.newDesign);
+  const dirty = useStore((s) => s.dirty);
   const [cols, setCols] = useState(100);
   const [rows, setRows] = useState(25);
   const [name, setName] = useState('Untitled Pattern');
   const [keepPalette, setKeepPalette] = useState(true);
+
+  const create = () => {
+    if (
+      dirty &&
+      !confirm('Discard unsaved changes and start a new design?')
+    )
+      return;
+    newDesign({ columns: cols, rows, name, keepPalette });
+    onClose();
+  };
 
   return (
     <Modal title="New Design" onClose={onClose}>
@@ -96,13 +101,7 @@ function NewDialog({ onClose }: { onClose: () => void }) {
         <button className="btn" onClick={onClose}>
           Cancel
         </button>
-        <button
-          className="btn primary"
-          onClick={() => {
-            newDesign({ columns: cols, rows, name, keepPalette });
-            onClose();
-          }}
-        >
+        <button className="btn primary" onClick={create}>
           Create
         </button>
       </div>

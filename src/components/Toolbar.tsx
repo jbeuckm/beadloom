@@ -11,14 +11,16 @@ const TOOLS: Array<{ id: ToolId; icon: IconName; label: string }> = [
   { id: 'rect', icon: 'square', label: 'Box' },
   { id: 'rectFill', icon: 'square-fill', label: 'Box+' },
   { id: 'select', icon: 'marquee', label: 'Select' },
+  { id: 'wand', icon: 'wand', label: 'Wand' },
   { id: 'pan', icon: 'move', label: 'Pan' },
-  { id: 'reference', icon: 'image', label: 'Image' },
 ];
 
 export default function Toolbar() {
   const s = useStore();
   const hasSel = !!s.selection;
   const hasClip = !!s.clipboard;
+  const selId = s.selectedSelburoseId;
+  const rightPanel = s.rightPanel;
 
   return (
     <div className="toolrail" role="toolbar" aria-label="Tools">
@@ -35,6 +37,56 @@ export default function Toolbar() {
           <span className="lb">{t.label}</span>
         </button>
       ))}
+
+      <div className="sep" aria-hidden="true" />
+
+      <button
+        className={'tool' + (rightPanel === 'selburose' ? ' active' : '')}
+        onClick={() =>
+          rightPanel === 'selburose'
+            ? s.closeSelburoseEditor()
+            : s.addSelburose()
+        }
+        title="Selburose — drop a parametric eight-point star"
+        aria-label="Selburose"
+        aria-pressed={rightPanel === 'selburose'}
+      >
+        <Icon name="selburose" />
+        <span className="lb">Selburose</span>
+      </button>
+      <button
+        className={'tool' + (rightPanel === 'life' ? ' active' : '')}
+        onClick={() => s.setRightPanel(rightPanel === 'life' ? null : 'life')}
+        title="Game of Life"
+        aria-label="Game of Life"
+        aria-pressed={rightPanel === 'life'}
+      >
+        <Icon name="dice" />
+        <span className="lb">Life</span>
+      </button>
+      <button
+        className={'tool' + (rightPanel === 'reference' ? ' active' : '')}
+        onClick={() => {
+          s.setTool('reference');
+          s.setRightPanel(rightPanel === 'reference' ? null : 'reference');
+        }}
+        title="Reference image — trace from a photo"
+        aria-label="Reference image"
+        aria-pressed={rightPanel === 'reference'}
+      >
+        <Icon name="image" />
+        <span className="lb">Image</span>
+      </button>
+      <button
+        className={'tool' + (rightPanel === 'layers' ? ' active' : '')}
+        onClick={() => s.setRightPanel(rightPanel === 'layers' ? null : 'layers')}
+        title="Layers"
+        aria-label="Layers"
+        aria-pressed={rightPanel === 'layers'}
+      >
+        <Icon name="layers" />
+        <span className="lb">Layers</span>
+      </button>
 
       <div className="sep" aria-hidden="true" />
 
@@ -107,8 +159,12 @@ export default function Toolbar() {
 
       <button
         className="tool"
-        onClick={() => s.flip('h', hasSel ? 'selection' : 'all')}
-        title="Mirror left/right"
+        onClick={() =>
+          selId
+            ? s.transformSelburose(selId, 'flipH')
+            : s.flip('h', hasSel ? 'selection' : 'all')
+        }
+        title={selId ? 'Mirror the selected Selburose' : 'Mirror left/right'}
         aria-label="Mirror left/right"
       >
         <Icon name="flip-h" />
@@ -116,8 +172,12 @@ export default function Toolbar() {
       </button>
       <button
         className="tool"
-        onClick={() => s.flip('v', hasSel ? 'selection' : 'all')}
-        title="Mirror up/down"
+        onClick={() =>
+          selId
+            ? s.transformSelburose(selId, 'flipV')
+            : s.flip('v', hasSel ? 'selection' : 'all')
+        }
+        title={selId ? 'Mirror the selected Selburose' : 'Mirror up/down'}
         aria-label="Mirror up/down"
       >
         <Icon name="flip-v" />
@@ -125,8 +185,12 @@ export default function Toolbar() {
       </button>
       <button
         className="tool"
-        onClick={() => s.rotate180(hasSel ? 'selection' : 'all')}
-        title="Rotate 180°"
+        onClick={() =>
+          selId
+            ? s.transformSelburose(selId, 'rot180')
+            : s.rotate180(hasSel ? 'selection' : 'all')
+        }
+        title={selId ? 'Rotate the selected Selburose 180°' : 'Rotate 180°'}
         aria-label="Rotate 180 degrees"
       >
         <Icon name="rotate" />

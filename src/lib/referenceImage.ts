@@ -1,44 +1,38 @@
-// Session-only store for the decoded reference image + its pixels. Kept outside
-// the Zustand store (which only holds the lightweight transform metadata) so the
-// bitmap never has to be cloned into history snapshots or serialised.
+// Session-only cache of decoded image-layer bitmaps + their pixels, keyed by
+// object-URL. Kept outside the Zustand store so bitmaps never get cloned into
+// history snapshots or serialised. One entry per placed image layer.
 
-let currentSrc = '';
-let image: HTMLImageElement | null = null;
-let pixels: ImageData | null = null;
+interface Entry {
+  img: HTMLImageElement | null;
+  pixels: ImageData | null;
+  loading: boolean;
+}
+
+const cache = new Map<string, Entry>();
 const subscribers = new Set<() => void>();
 
 function notify() {
   for (const fn of subscribers) fn();
 }
 
-export function subscribeReferenceImage(fn: () => void): () => void {
+export function subscribeImages(fn: () => void): () => void {
   subscribers.add(fn);
   return () => subscribers.delete(fn);
 }
 
-export function getReferenceImage(): HTMLImageElement | null {
-  return image;
-}
+/** Kick off an async decode + rasterise for `src` if it hasn't been seen. */
+export function ensureImage(src: string): void {
+  if (!src || cache.has(src)) return;
+  const entry: Entry = { img: null, pixels: null, loading: true };
+  cache.set(src, entry);
 
-export function referenceImageReady(): boolean {
-  return !!pixels;
-}
-
-/** Point the loader at a new object URL / data URI. Decodes + rasterises async. */
-export function setReferenceImageSrc(src: string): void {
-  if (src === currentSrc) return;
-  currentSrc = src;
-  image = null;
-  pixels = null;
-  if (!src) {
-    notify();
-    return;
-  }
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.onload = () => {
-    if (currentSrc !== src) return; // superseded
-    image = img;
+    const e = cache.get(src);
+    if (!e) return; // revoked before it loaded
+    e.img = img;
+    e.loading = false;
     try {
       const cv = document.createElement('canvas');
       cv.width = img.naturalWidth;
@@ -46,34 +40,47 @@ export function setReferenceImageSrc(src: string): void {
       const ctx = cv.getContext('2d', { willReadFrequently: true });
       if (ctx) {
         ctx.drawImage(img, 0, 0);
-        pixels = ctx.getImageData(0, 0, cv.width, cv.height);
+        e.pixels = ctx.getImageData(0, 0, cv.width, cv.height);
       }
     } catch {
-      pixels = null; // tainted canvas — drawing still works, tracing won't
+      e.pixels = null; // tainted canvas — drawing still works, tracing won't
     }
     notify();
   };
   img.onerror = () => {
-    if (currentSrc === src) {
-      image = null;
-      pixels = null;
-      notify();
-    }
+    const e = cache.get(src);
+    if (e) e.loading = false;
+    notify();
   };
   img.src = src;
 }
 
-if (import.meta.env.DEV) {
-  (window as unknown as { __beadloomRef: unknown }).__beadloomRef = {
-    ready: referenceImageReady,
-  };
+export function getBitmap(src: string): HTMLImageElement | null {
+  return cache.get(src)?.img ?? null;
+}
+
+export function bitmapReady(src: string): boolean {
+  return !!cache.get(src)?.pixels;
+}
+
+/** Revoke an image layer's object URL and forget its bitmap. */
+export function revokeImage(src: string): void {
+  if (!cache.has(src)) return;
+  cache.delete(src);
+  try {
+    URL.revokeObjectURL(src);
+  } catch {
+    /* not an object URL, or already gone */
+  }
 }
 
 /** Nearest-pixel sample in image-pixel space; null if outside or not decoded. */
-export function sampleReferenceImage(
+export function sampleImage(
+  src: string,
   ix: number,
   iy: number,
 ): [number, number, number, number] | null {
+  const pixels = cache.get(src)?.pixels;
   if (!pixels) return null;
   const x = Math.floor(ix);
   const y = Math.floor(iy);
@@ -83,8 +90,12 @@ export function sampleReferenceImage(
   return [d[o], d[o + 1], d[o + 2], d[o + 3]];
 }
 
-/** Up to `max` evenly-spaced opaque pixels, for palette extraction. */
-export function referenceSamples(max = 4000): Array<[number, number, number]> {
+/** Up to `max` evenly-spaced opaque pixels of an image, for palette extraction. */
+export function imageSamples(
+  src: string,
+  max = 4000,
+): Array<[number, number, number]> {
+  const pixels = cache.get(src)?.pixels;
   if (!pixels) return [];
   const total = pixels.width * pixels.height;
   const step = Math.max(1, Math.floor(total / max));

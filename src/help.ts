@@ -13,10 +13,10 @@ export const SHORTCUTS: Array<[string, string]> = [
   ['⌘/Ctrl ⇧ Z  ·  Ctrl Y', 'Redo'],
   ['⌘/Ctrl C / X / V', 'Copy / cut / paste selection'],
   ['⌘/Ctrl A', 'Select all'],
-  ['Delete / Backspace', 'Clear selected cells'],
+  ['Delete / Backspace', 'Clear selected cells / delete selected shape'],
   ['[ / ]', 'Zoom out / in'],
   ['0', 'Fit pattern to screen'],
-  ['Esc', 'Cancel paste / clear selection'],
+  ['Esc', 'Cancel paste / placement / clear selection'],
 ];
 
 export const FILE_FORMAT_SPEC = `{
@@ -49,19 +49,40 @@ export const FILE_FORMAT_SPEC = `{
 
   "background": "#FFFFFF",          // painted behind empty cells
 
-  "cells": {
-    "encoding": "rows-index",       // row-major; value = index into palette.colors
-    "empty": -1,                    // this value means "no bead"
-    "data": [
-      [ 0, 0, 1, -1, 2, ... ],      // row 1, length === loom.columns
-      [ 2, 2, 2, -1, -1, ... ]      // row 2
-      // ...loom.rows arrays total
-    ]
-  }
+  // The layer stack, bottom -> top. Composited for display and export.
+  "layers": [
+    {
+      "id": "l1", "kind": "raster", "name": "Layer 1", "visible": true,
+      "data": [
+        [ 0, 0, 1, -1, 2, ... ],    // row 1, length === loom.columns
+        [ 2, 2, 2, -1, -1, ... ]    // ...loom.rows arrays total; -1 = no bead
+      ]
+    },
+    {
+      "id": "sel1", "kind": "selburose", "name": "Selburose 1", "visible": true,
+      "star": {
+        "cx": 50, "cy": 12,         // centre, in cell units (fractional ok)
+        "size": 9,                  // tip radius, in cells (square grid; half the height)
+        "rotationDeg": 0,           // 0 == stands on two points
+        "gap": 0.5,                 // per-edge inset of each parallelogram (apparent gap = 2x)
+        "coverage": 0.5,            // 0..1 fill threshold (fraction of a cell covered)
+        "center": "cell",           // "cell" (a middle bead) | "border" (axis between beads)
+        "mode": "fill",             // "fill" | "outline"
+        "colorIndex": 3             // index into palette.colors
+      }
+    }
+  ],
+
+  "cells": { "encoding": "rows-index", "empty": -1, "data": [ ... ] }
+  // ^ derived, read-only mirror of the flattened visible stack. On load,
+  //   "layers" is authoritative; a file with only "cells" (+ old "selburoses")
+  //   still opens as a single Background raster layer.
 }
 
 Notes
-- cells.data[r][c] is an integer index into palette.colors, or -1 for an empty cell.
+- A raster layer's data[r][c] is a palette index, or -1 for an empty (transparent) cell.
+- Higher layers win where they overlap. A selburose layer is never baked into
+  pixels until "Flatten to beads" converts it to a raster layer.
 - Reordering the palette in the app remaps every index so colours stay put.
 - On import, out-of-range indices are treated as empty and the grid is
   re-fitted to loom.columns x loom.rows, so hand-edited files still load.

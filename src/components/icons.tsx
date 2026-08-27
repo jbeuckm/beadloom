@@ -15,6 +15,7 @@ export type IconName =
   | 'square'
   | 'square-fill'
   | 'marquee'
+  | 'wand'
   | 'move'
   | 'undo'
   | 'redo'
@@ -41,6 +42,10 @@ export type IconName =
   | 'swatches'
   | 'image'
   | 'star'
+  | 'selburose'
+  | 'layers'
+  | 'eye'
+  | 'eye-off'
   | 'dice'
   | 'play'
   | 'stop';
@@ -78,6 +83,9 @@ const PATHS: Record<IconName, ReactNode> = {
   square: <rect x="4" y="4" width="16" height="16" rx="1" />,
   'square-fill': <rect x="4" y="4" width="16" height="16" rx="1" fill="currentColor" />,
   marquee: <rect x="4" y="4" width="16" height="16" rx="1" strokeDasharray="3.5 3" />,
+  wand: (
+    <path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h0M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5" />
+  ),
   move: (
     <>
       <path d="M12 2v20M2 12h20" />
@@ -230,6 +238,29 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   star: (
     <path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.9 6.1 21l1.2-6.5L2.5 9.9l6.6-.9z" />
+  ),
+  selburose: (
+    <path d="M12 2.6 13.9 7.4 18.7 5.3 16.6 10.1 21.4 12 16.6 13.9 18.7 18.7 13.9 16.6 12 21.4 10.1 16.6 5.3 18.7 7.4 13.9 2.6 12 7.4 10.1 5.3 5.3 10.1 7.4Z" />
+  ),
+  layers: (
+    <>
+      <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+      <path d="m2 12 10 5 10-5" />
+      <path d="m2 17 10 5 10-5" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  'eye-off': (
+    <>
+      <path d="M9.9 5.2A9.5 9.5 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.6 3.4M6.1 6.1A17 17 0 0 0 2 12s3.5 7 10 7a9.5 9.5 0 0 0 4-.9" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+      <path d="m3 3 18 18" />
+    </>
   ),
   dice: (
     <>
