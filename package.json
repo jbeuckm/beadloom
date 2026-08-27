@@ -1,0 +1,31 @@
+{
+  "name": "beadloom-studio",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "iPad-first bead loom pattern designer (React + TypeScript)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "preview:ipad": "node scripts/ipad-preview.mjs",
+    "make:example": "node scripts/make-example.mjs",
+    "test": "playwright test",
+    "test:features": "playwright test features",
+    "test:screens": "playwright test screenshots",
+    "test:report": "playwright show-report"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
+  }
+}

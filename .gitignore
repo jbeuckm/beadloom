@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+.DS_Store
+*.local
+.vite
+test-results
+playwright-report
+blob-report
+.last-run.json
+
+.vscode

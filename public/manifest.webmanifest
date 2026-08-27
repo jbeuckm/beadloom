@@ -1,0 +1,11 @@
+{
+  "name": "BeadLoom Studio",
+  "short_name": "BeadLoom",
+  "description": "iPad-first bead loom pattern designer",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f1ec",
+  "theme_color": "#f3f1ec"
+}
