@@ -5,6 +5,9 @@ import type { DialogId } from './TopBar';
 import * as storage from '../lib/storage';
 import { pickTextFile } from '../lib/designFormat';
 import { FILE_FORMAT_SPEC, SHORTCUTS } from '../help';
+import LifeDialog from './LifeDialog';
+import SelburoseDialog from './SelburoseDialog';
+import ReferencePanel from './ReferencePanel';
 
 export default function Dialogs({
   which,
@@ -17,6 +20,9 @@ export default function Dialogs({
   if (which === 'resize') return <ResizeDialog onClose={onClose} />;
   if (which === 'saveas') return <SaveAsDialog onClose={onClose} />;
   if (which === 'open') return <OpenDialog onClose={onClose} />;
+  if (which === 'life') return <LifeDialog onClose={onClose} />;
+  if (which === 'selburose') return <SelburoseDialog onClose={onClose} />;
+  if (which === 'reference') return <ReferencePanel onClose={onClose} />;
   return <HelpDialog onClose={onClose} />;
 }
 

@@ -12,6 +12,7 @@ const TOOLS: Array<{ id: ToolId; icon: IconName; label: string }> = [
   { id: 'rectFill', icon: 'square-fill', label: 'Box+' },
   { id: 'select', icon: 'marquee', label: 'Select' },
   { id: 'pan', icon: 'move', label: 'Pan' },
+  { id: 'reference', icon: 'image', label: 'Image' },
 ];
 
 export default function Toolbar() {

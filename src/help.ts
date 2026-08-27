@@ -8,6 +8,7 @@ export const SHORTCUTS: Array<[string, string]> = [
   ['F', 'Rectangle filled'],
   ['M', 'Select (marquee)'],
   ['H', 'Pan'],
+  ['K', 'Reference image (drag to move)'],
   ['⌘/Ctrl Z', 'Undo'],
   ['⌘/Ctrl ⇧ Z  ·  Ctrl Y', 'Redo'],
   ['⌘/Ctrl C / X / V', 'Copy / cut / paste selection'],

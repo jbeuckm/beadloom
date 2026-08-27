@@ -32,6 +32,18 @@ export async function snapshot(page: Page) {
       selection: s.selection,
       hasClipboard: !!s.clipboard,
       clipboard: s.clipboard ? { w: s.clipboard.w, h: s.clipboard.h } : null,
+      reference: s.reference
+        ? {
+            w: s.reference.w,
+            h: s.reference.h,
+            x: s.reference.x,
+            y: s.reference.y,
+            scale: s.reference.scale,
+            rotationDeg: s.reference.rotationDeg,
+            opacity: s.reference.opacity,
+            visible: s.reference.visible,
+          }
+        : null,
       highlightRow: s.highlightRow,
       settings: s.settings,
       undo: s.undoStack.length,

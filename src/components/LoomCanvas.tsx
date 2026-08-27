@@ -11,6 +11,10 @@ import { drawBase } from '../lib/render';
 import { linePoints, normRect } from '../lib/grid';
 import { EMPTY, PX_PER_COL, type Rect } from '../types';
 import { clamp } from '../util';
+import {
+  getReferenceImage,
+  subscribeReferenceImage,
+} from '../lib/referenceImage';
 
 const MIN_ZOOM = 0.15;
 const MAX_ZOOM = 14;
@@ -44,6 +48,11 @@ export default function LoomCanvas() {
   const view = useStore((s) => s.view);
   const pasteMode = useStore((s) => s.pasteMode);
   const cursor = useStore((s) => s.cursor);
+  const reference = useStore((s) => s.reference);
+  const [refNonce, setRefNonce] = useState(0);
+
+  // Redraw when the reference bitmap finishes decoding.
+  useEffect(() => subscribeReferenceImage(() => setRefNonce((n) => n + 1)), []);
 
   const asp = design.loom.cellAspect;
   const scale = PX_PER_COL * view.zoom;
@@ -69,6 +78,9 @@ export default function LoomCanvas() {
   >(null);
   const panLast = useRef<{ x: number; y: number } | null>(null);
   const resizing = useRef<null | 'cols' | 'rows'>(null);
+  const refDrag = useRef<
+    null | { gx: number; gy: number; x0: number; y0: number }
+  >(null);
 
   const pendingPaint = useRef<Array<[number, number]>>([]);
   const paintRaf = useRef(false);
@@ -90,6 +102,17 @@ export default function LoomCanvas() {
     },
     [asp],
   );
+
+  /** Continuous position in grid column-units (both axes), for the reference image. */
+  const toGridUnits = useCallback((clientX: number, clientY: number) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const v = S().view;
+    const sc = PX_PER_COL * v.zoom;
+    return {
+      gx: (clientX - rect.left - v.panX) / sc,
+      gy: (clientY - rect.top - v.panY) / sc,
+    };
+  }, []);
 
   const flushPaint = useCallback(() => {
     paintRaf.current = false;
@@ -212,6 +235,41 @@ export default function LoomCanvas() {
       highlightRow,
     });
 
+    // reference image overlay. Grid column-units map to screen as
+    // screen = pan + unit * scale (uniform on both axes — cell squish is baked
+    // into the reference transform, not the view here).
+    void refNonce;
+    const refImg = getReferenceImage();
+    if (reference && reference.visible && refImg) {
+      const deg = Math.PI / 180;
+      const dw = reference.w * reference.scale; // destination size, grid columns
+      const dh = reference.h * reference.scale;
+      ctx.save();
+      ctx.translate(view.panX, view.panY);
+      ctx.scale(scale, scale);
+      ctx.translate(reference.x, reference.y);
+      ctx.rotate(reference.rotationDeg * deg);
+      ctx.transform(
+        1,
+        Math.tan(reference.skewYDeg * deg),
+        Math.tan(reference.skewXDeg * deg),
+        1,
+        0,
+        0,
+      );
+      ctx.globalAlpha = clamp(reference.opacity, 0, 1);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(refImg, -dw / 2, -dh / 2, dw, dh);
+      if (tool === 'reference') {
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = '#1268ff';
+        ctx.lineWidth = 1.5 / scale;
+        ctx.setLineDash([6 / scale, 4 / scale]);
+        ctx.strokeRect(-dw / 2, -dh / 2, dw, dh);
+      }
+      ctx.restore();
+    }
+
     const cellH = scale * asp;
     const cols = design.loom.columns;
     const rows = design.loom.rows;
@@ -326,6 +384,8 @@ export default function LoomCanvas() {
     pasteMode,
     cursor,
     tool,
+    reference,
+    refNonce,
   ]);
 
   // ---- pointer handlers ------------------------------------------------
@@ -362,6 +422,16 @@ export default function LoomCanvas() {
     const v = S().view;
     const d = S().design;
     const inb = c >= 0 && r >= 0 && c < d.loom.columns && r < d.loom.rows;
+
+    // reference tool: drag the placed image around
+    if (tool === 'reference') {
+      const ref = S().reference;
+      if (ref) {
+        const g = toGridUnits(e.clientX, e.clientY);
+        refDrag.current = { gx: g.gx, gy: g.gy, x0: ref.x, y0: ref.y };
+      }
+      return;
+    }
 
     // pan: pan tool, middle button, or (in pencil-only) a finger touch
     if (
@@ -444,6 +514,16 @@ export default function LoomCanvas() {
       return;
     }
 
+    if (refDrag.current) {
+      const g = toGridUnits(e.clientX, e.clientY);
+      const d = refDrag.current;
+      S().updateReference({
+        x: d.x0 + (g.gx - d.gx),
+        y: d.y0 + (g.gy - d.gy),
+      });
+      return;
+    }
+
     if (panLast.current) {
       const dx = e.clientX - panLast.current.x;
       const dy = e.clientY - panLast.current.y;
@@ -487,6 +567,7 @@ export default function LoomCanvas() {
     }
     if (pointers.current.size < 2) pinch.current = null;
     panLast.current = null;
+    refDrag.current = null;
 
     if (painting.current) {
       painting.current = false;

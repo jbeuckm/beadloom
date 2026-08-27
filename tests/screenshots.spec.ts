@@ -139,4 +139,41 @@ test('guided walkthrough with screenshots', async ({ page }) => {
     .click();
   await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
   await shot(page, '14-toho-palette');
+
+  // 15 — Selburose star generator ------------------------------
+  await openFileMenu(page, /Selburose/);
+  await expect(page.locator('.modal')).toContainText('Selburose');
+  await shot(page, '15-selburose');
+  await page.locator('.modal').getByRole('button', { name: 'Insert' }).click();
+  await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
+  await shot(page, '16-selburose-inserted');
+
+  // 17 — Game of Life -----------------------------------------
+  await openFileMenu(page, /Game of Life/);
+  const life = page.locator('.modal', { hasText: 'Game of Life' });
+  await life.getByRole('button', { name: 'Seed grid' }).click();
+  await life.getByRole('button', { name: 'Step' }).click();
+  await shot(page, '17-game-of-life');
+  await life.getByRole('button', { name: 'Done' }).click();
+  await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
+
+  // 18 — reference image + trace-to-palette -------------------
+  await openFileMenu(page, /^\+ New/);
+  await page.locator('.modal').getByRole('button', { name: 'Create' }).click();
+  await openFileMenu(page, /Reference Image/);
+  await page
+    .locator('.ref-panel input[type="file"]')
+    .setInputFiles('tests/fixtures/trace-quad.png');
+  await expect.poll(async () => (await snapshot(page)).reference !== null).toBe(true);
+  await shot(page, '18-reference-image');
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as { __beadloomRef?: { ready(): boolean } }).__beadloomRef?.ready(),
+      ),
+    )
+    .toBe(true);
+  await page.locator('.ref-panel').getByRole('button', { name: 'Trace → palette' }).click();
+  await shot(page, '19-reference-traced');
 });

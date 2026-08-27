@@ -12,6 +12,7 @@ import {
   type Palette,
   PX_PER_COL,
   type Rect,
+  type ReferenceImage,
   type Settings,
   type Snapshot,
   type Stamp,
@@ -19,6 +20,11 @@ import {
 } from '../types';
 import { makeColor, makeRainbowPalette } from '../lib/palettes';
 import { emptyGrid, floodFill, linePoints, readStamp, resizeGrid } from '../lib/grid';
+import { nearestIndex, paletteLabs } from '../lib/color';
+import {
+  sampleReferenceImage,
+  setReferenceImageSrc,
+} from '../lib/referenceImage';
 import {
   parseDesign,
   serializeDesign,
@@ -71,6 +77,7 @@ export interface StoreState {
   clipboard: Stamp | null;
   highlightRow: number | null;
   cursor: { c: number; r: number } | null;
+  reference: ReferenceImage | null;
   settings: Settings;
   view: { zoom: number; panX: number; panY: number };
   viewport: { w: number; h: number };
@@ -100,6 +107,15 @@ export interface StoreState {
   paintRect: (rect: Rect, value: number, filled: boolean) => void;
   bucketFill: (c: number, r: number) => void;
   pickAt: (c: number, r: number) => void;
+
+  // bulk grid ops — history managed by caller
+  replaceGrid: (data: number[][]) => void;
+  setCells: (entries: Array<[number, number, number]>) => void;
+
+  // reference image (self-managed history for trace)
+  setReference: (r: ReferenceImage | null) => void;
+  updateReference: (patch: Partial<ReferenceImage>) => void;
+  traceReference: (opts?: { coveredOnly?: boolean }) => void;
 
   // clipboard (self-managed history)
   copySelection: () => void;
@@ -213,6 +229,7 @@ export const useStore = create<StoreState>()(
     clipboard: null,
     highlightRow: null,
     cursor: null,
+    reference: null,
     settings: initialSettings,
     view: { zoom: 1, panX: 0, panY: 0 },
     viewport: { w: 0, h: 0 },
@@ -331,6 +348,90 @@ export const useStore = create<StoreState>()(
         const v = s.design.cells.data[r]?.[c] ?? -1;
         return v >= 0 ? { activeColor: v } : {};
       }),
+
+    replaceGrid: (data) =>
+      set((s) => {
+        const { columns, rows } = s.design.loom;
+        const fixed =
+          data.length === rows && data.every((row) => row.length === columns)
+            ? data
+            : resizeGrid(data, columns, rows);
+        return {
+          design: { ...s.design, cells: { ...s.design.cells, data: fixed } },
+          selection: null,
+          dirty: true,
+        };
+      }),
+
+    setCells: (entries) =>
+      set((s) => {
+        if (!entries.length) return {};
+        const { columns, rows } = s.design.loom;
+        const data = s.design.cells.data;
+        const touched = new Map<number, number[]>();
+        for (const [c, r, v] of entries) {
+          if (c < 0 || r < 0 || c >= columns || r >= rows) continue;
+          let row = touched.get(r);
+          if (!row) {
+            row = data[r].slice();
+            touched.set(r, row);
+          }
+          row[c] = v;
+        }
+        if (!touched.size) return {};
+        const next = data.slice();
+        for (const [r, row] of touched) next[r] = row;
+        return {
+          design: { ...s.design, cells: { ...s.design.cells, data: next } },
+          dirty: true,
+        };
+      }),
+
+    setReference: (r) => {
+      setReferenceImageSrc(r?.src ?? '');
+      set({ reference: r, tool: r ? 'reference' : get().tool });
+    },
+
+    updateReference: (patch) =>
+      set((s) => (s.reference ? { reference: { ...s.reference, ...patch } } : {})),
+
+    traceReference: (opts) => {
+      const s = get();
+      const ref = s.reference;
+      if (!ref) return;
+      const coveredOnly = opts?.coveredOnly ?? true;
+      const { columns, rows, cellAspect } = s.design.loom;
+      const labs = paletteLabs(s.design.palette.colors.map((c) => c.hex));
+      if (!labs.length) return;
+
+      const th = (ref.rotationDeg * Math.PI) / 180;
+      const cos = Math.cos(-th);
+      const sin = Math.sin(-th);
+      const b = Math.tan((ref.skewXDeg * Math.PI) / 180);
+      const cc = Math.tan((ref.skewYDeg * Math.PI) / 180);
+      const det = 1 - b * cc || 1;
+      const s2 = ref.scale || 1e-6;
+
+      const entries: Array<[number, number, number]> = [];
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < columns; c++) {
+          const gx = c + 0.5 - ref.x;
+          const gy = (r + 0.5) * cellAspect - ref.y;
+          const rx = gx * cos - gy * sin;
+          const ry = gx * sin + gy * cos;
+          const ux = (rx - b * ry) / det;
+          const uy = (-cc * rx + ry) / det;
+          const ix = ux / s2 + ref.w / 2;
+          const iy = uy / s2 + ref.h / 2;
+          const px = sampleReferenceImage(ix, iy);
+          if (!px || (coveredOnly && px[3] < 8)) continue;
+          entries.push([c, r, nearestIndex([px[0], px[1], px[2]], labs)]);
+        }
+      }
+      if (!entries.length) return;
+      s.pushHistory();
+      s.setCells(entries);
+    },
 
     copySelection: () =>
       set((s) =>
@@ -704,6 +805,7 @@ export const useStore = create<StoreState>()(
           pasteMode: false,
           activeColor: 0,
           highlightRow: null,
+          reference: null,
           dirty: false,
         };
       }),
@@ -720,6 +822,7 @@ export const useStore = create<StoreState>()(
         pasteMode: false,
         activeColor: 0,
         highlightRow: null,
+        reference: null,
         dirty: false,
       })),
 

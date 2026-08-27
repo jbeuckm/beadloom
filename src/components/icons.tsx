@@ -38,7 +38,12 @@ export type IconName =
   | 'hash'
   | 'download'
   | 'plus'
-  | 'swatches';
+  | 'swatches'
+  | 'image'
+  | 'star'
+  | 'dice'
+  | 'play'
+  | 'stop';
 
 const DOT = { fill: 'currentColor', stroke: 'none' } as const;
 
@@ -216,6 +221,28 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="14" y="14" width="7" height="7" rx="1" />
     </>
   ),
+  image: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-4.5-4.5L5 22" />
+    </>
+  ),
+  star: (
+    <path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.9 6.1 21l1.2-6.5L2.5 9.9l6.6-.9z" />
+  ),
+  dice: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <circle cx="8.5" cy="8.5" r="1.1" {...DOT} />
+      <circle cx="15.5" cy="8.5" r="1.1" {...DOT} />
+      <circle cx="12" cy="12" r="1.1" {...DOT} />
+      <circle cx="8.5" cy="15.5" r="1.1" {...DOT} />
+      <circle cx="15.5" cy="15.5" r="1.1" {...DOT} />
+    </>
+  ),
+  play: <path d="M7 4.5v15l13-7.5z" />,
+  stop: <rect x="6" y="6" width="12" height="12" rx="1.5" />,
 };
 
 export function Icon({

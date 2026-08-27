@@ -89,6 +89,7 @@ export default function App() {
         f: () => s.setTool('rectFill'),
         m: () => s.setTool('select'),
         h: () => s.setTool('pan'),
+        k: () => s.setTool('reference'),
         '[': () => s.zoomBy(1 / 1.25),
         ']': () => s.zoomBy(1.25),
         '0': () => s.requestFit(),

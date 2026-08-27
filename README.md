@@ -15,6 +15,19 @@ on a loom.
   (flood), Eyedropper, Line, Rectangle (outline & filled), Marquee **Select →
   Copy / Cut / Paste**, Pan.
 - **Mirror H / V** and **Rotate 180°** — whole design or just the selection.
+- **Generate** (File ▸ Generate):
+  - **Selburose** — a parametric star / rosette (petals, size, petal separation,
+    rotation, centre; filled or outline) with a live preview, stamped in the
+    active colour.
+  - **Game of Life** — evolve the pattern with cellular-automaton rules
+    (`B3/S23` by default, editable), toroidal wrap, adjustable speed, single-step
+    or run, and a random seeder. New cells take the active colour or a vote of
+    their neighbours. Every step is undoable.
+  - **Reference Image** — drop a photo behind the grid, position it with the
+    **Image** tool (drag) plus width / rotation / skew / opacity, then
+    **Trace → palette** to fill every covered cell with its nearest palette
+    colour (CIE-Lab match). The image is a working aid — it is not saved into
+    design files.
 - **Palettes**: build / edit / reorder / delete colours (name, hex, optional bead
   code). Default is a **10-colour rainbow**. The **Palette Library** dialog holds
   presets — including a curated **Toho Round 11/0** seed-bead library (with the
@@ -67,6 +80,10 @@ src/
     palettes.ts       default rainbow, colour factory, preset list
     tohoPalettes.ts   curated Toho Round 11/0 seed-bead colour library
     grid.ts           flood fill, Bresenham, resize, stamp, usage counts
+    life.ts           Game of Life step / rule parsing / random seed
+    shapes.ts         Selburose star polygon + rasteriser
+    color.ts          RGB→Lab, nearest-palette-colour match
+    referenceImage.ts session-only decoded reference bitmap + sampler
     render.ts         shared canvas draw of the "document" layer (screen + PNG)
     designFormat.ts   (de)serialise + validate + file download / picker + PNG
     storage.ts        localStorage slots (designs, palettes, autosave, settings)
@@ -79,6 +96,9 @@ src/
     PalettePanel.tsx   swatches, palette name/save, background colour
     PaletteLibrary.tsx presets (Toho, rainbow), saved palettes, import/export
     PaletteEditor.tsx  per-colour editor modal
+    LifeDialog.tsx     Game of Life controls
+    SelburoseDialog.tsx star generator with SVG preview
+    ReferencePanel.tsx reference-image load / transform / trace
     icons.tsx          inline monochrome line-art icon set
     StatusBar.tsx      counts, selection, zoom
     Dialogs.tsx        New / Open / Save As / Resize / Help

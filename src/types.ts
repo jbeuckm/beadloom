@@ -76,7 +76,27 @@ export type ToolId =
   | 'rect'
   | 'rectFill'
   | 'select'
-  | 'pan';
+  | 'pan'
+  | 'reference';
+
+/**
+ * A photo/artwork placed behind the grid to trace from. The bitmap itself lives
+ * in `lib/referenceImage.ts`; this is only the placement transform. Not written
+ * to design files — `src` is a session object URL.
+ */
+export interface ReferenceImage {
+  src: string;
+  w: number; // natural pixel width
+  h: number; // natural pixel height
+  x: number; // centre X, in grid columns
+  y: number; // centre Y, in grid columns (row units scaled by cellAspect)
+  scale: number; // grid columns per image pixel
+  rotationDeg: number;
+  skewXDeg: number;
+  skewYDeg: number;
+  opacity: number; // 0..1
+  visible: boolean;
+}
 
 /** Inclusive, normalised cell rectangle. */
 export interface Rect {
