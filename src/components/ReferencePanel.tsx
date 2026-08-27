@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { Icon } from './icons';
 import type { ReferenceImage } from '../types';
+import { uid } from '../util';
+import { medianCut, rgbToHex } from '../lib/quantize';
+import {
+  referenceImageReady,
+  referenceSamples,
+  subscribeReferenceImage,
+} from '../lib/referenceImage';
 
 export default function ReferencePanel({ onClose }: { onClose: () => void }) {
   const { columns, rows, cellAspect } = useStore((s) => s.design.loom);
@@ -9,9 +16,10 @@ export default function ReferencePanel({ onClose }: { onClose: () => void }) {
   const setReference = useStore((s) => s.setReference);
   const updateReference = useStore((s) => s.updateReference);
   const traceReference = useStore((s) => s.traceReference);
+  const applyPalette = useStore((s) => s.applyPalette);
   const setTool = useStore((s) => s.setTool);
 
-  const [coveredOnly, setCoveredOnly] = useState(true);
+  const [nColors, setNColors] = useState(10);
   const fileRef = useRef<HTMLInputElement>(null);
   const urlRef = useRef<string | null>(null);
 
@@ -25,7 +33,20 @@ export default function ReferencePanel({ onClose }: { onClose: () => void }) {
   const fitScale = (w: number, h: number) =>
     Math.min(columns / w, (rows * cellAspect) / h) || 0.1;
 
-  const choose = async (file: File) => {
+  const traceWhenReady = () => {
+    if (referenceImageReady()) {
+      traceReference();
+      return;
+    }
+    const un = subscribeReferenceImage(() => {
+      if (referenceImageReady()) {
+        un();
+        traceReference();
+      }
+    });
+  };
+
+  const choose = (file: File) => {
     if (urlRef.current) URL.revokeObjectURL(urlRef.current);
     const url = URL.createObjectURL(file);
     urlRef.current = url;
@@ -45,14 +66,15 @@ export default function ReferencePanel({ onClose }: { onClose: () => void }) {
         skewYDeg: 0,
         opacity: 0.55,
         visible: true,
+        live: true,
+        coveredOnly: true,
       };
       setReference(next);
       setTool('reference');
+      traceWhenReady();
     };
     img.src = url;
   };
-
-  const patch = (p: Partial<ReferenceImage>) => updateReference(p);
 
   const remove = () => {
     if (urlRef.current) {
@@ -63,7 +85,17 @@ export default function ReferencePanel({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
-  const widthCols = reference ? +(reference.w * reference.scale).toFixed(1) : 0;
+  const extractPalette = () => {
+    const samples = referenceSamples();
+    if (!samples.length) return;
+    const colors = medianCut(samples, nColors).map((rgb, i) => ({
+      id: `img-${i + 1}`,
+      name: `Colour ${i + 1}`,
+      hex: rgbToHex(rgb),
+    }));
+    applyPalette({ id: uid(), name: 'From image', colors });
+    if (reference?.live) traceReference();
+  };
 
   return (
     <div className="ref-panel" role="dialog" aria-label="Reference image">
@@ -81,7 +113,7 @@ export default function ReferencePanel({ onClose }: { onClose: () => void }) {
         hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) void choose(f);
+          if (f) choose(f);
           e.target.value = '';
         }}
       />
@@ -89,8 +121,9 @@ export default function ReferencePanel({ onClose }: { onClose: () => void }) {
       {!reference ? (
         <>
           <p className="hint">
-            Place a photo or drawing behind the grid, position it, then fill every
-            cell with its nearest palette colour.
+            Drop a photo or drawing behind the grid, transform it directly on the
+            canvas with the <b>Image</b> tool, and fill the beads with its nearest
+            palette colours as you go.
           </p>
           <button className="btn primary" onClick={() => fileRef.current?.click()}>
             <Icon name="image" size={16} /> Choose image…
@@ -98,50 +131,56 @@ export default function ReferencePanel({ onClose }: { onClose: () => void }) {
         </>
       ) : (
         <>
-          <div className="field">
-            <label>Width — {widthCols} columns</label>
-            <input
-              type="range"
-              min={1}
-              max={Math.max(columns * 3, 30)}
-              value={Math.min(widthCols, Math.max(columns * 3, 30))}
-              onChange={(e) =>
-                patch({ scale: Number(e.target.value) / reference.w })
-              }
-            />
-          </div>
-          <div className="field">
-            <label>Rotation — {Math.round(reference.rotationDeg)}°</label>
-            <input
-              type="range"
-              min={-180}
-              max={180}
-              value={Math.round(reference.rotationDeg)}
-              onChange={(e) => patch({ rotationDeg: Number(e.target.value) })}
-            />
-          </div>
-          <div className="row2">
-            <div className="field">
-              <label>Skew X — {Math.round(reference.skewXDeg)}°</label>
+          <img className="ref-thumb" src={reference.src} alt="" />
+
+          <p className="hint">
+            <b>Image</b> tool: drag the picture to move it; use the corner, edge
+            and rotation handles to scale, skew and rotate.
+          </p>
+
+          <h4>Palette from image</h4>
+          <div className="ref-btn-row">
+            <label className="ref-num">
+              Colours
               <input
-                type="range"
-                min={-45}
-                max={45}
-                value={Math.round(reference.skewXDeg)}
-                onChange={(e) => patch({ skewXDeg: Number(e.target.value) })}
+                type="number"
+                min={2}
+                max={24}
+                value={nColors}
+                onChange={(e) =>
+                  setNColors(Math.max(2, Math.min(24, Number(e.target.value) || 2)))
+                }
               />
-            </div>
-            <div className="field">
-              <label>Skew Y — {Math.round(reference.skewYDeg)}°</label>
-              <input
-                type="range"
-                min={-45}
-                max={45}
-                value={Math.round(reference.skewYDeg)}
-                onChange={(e) => patch({ skewYDeg: Number(e.target.value) })}
-              />
-            </div>
+            </label>
+            <button className="btn grow" onClick={extractPalette}>
+              Replace palette
+            </button>
           </div>
+
+          <h4>Trace</h4>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={reference.live}
+              onChange={(e) => {
+                updateReference({ live: e.target.checked });
+                if (e.target.checked) traceReference();
+              }}
+            />
+            Live — re-colour cells while transforming
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={reference.coveredOnly}
+              onChange={(e) => {
+                updateReference({ coveredOnly: e.target.checked });
+                if (reference.live) traceReference();
+              }}
+            />
+            Only cells the image covers
+          </label>
+
           <div className="field">
             <label>Opacity — {Math.round(reference.opacity * 100)}%</label>
             <input
@@ -149,63 +188,44 @@ export default function ReferencePanel({ onClose }: { onClose: () => void }) {
               min={5}
               max={100}
               value={Math.round(reference.opacity * 100)}
-              onChange={(e) => patch({ opacity: Number(e.target.value) / 100 })}
+              onChange={(e) =>
+                updateReference({ opacity: Number(e.target.value) / 100 })
+              }
             />
           </div>
 
           <div className="ref-btn-row">
             <button
               className="btn mini"
-              onClick={() =>
-                patch({
+              onClick={() => {
+                updateReference({
                   scale: fitScale(reference.w, reference.h),
                   x: columns / 2,
                   y: (rows * cellAspect) / 2,
                   rotationDeg: 0,
                   skewXDeg: 0,
                   skewYDeg: 0,
-                })
-              }
+                });
+                if (reference.live) traceReference();
+              }}
             >
-              Fit
+              Fit &amp; reset
             </button>
             <button
               className="btn mini"
-              onClick={() => patch({ x: columns / 2, y: (rows * cellAspect) / 2 })}
-            >
-              Centre
-            </button>
-            <button
-              className={'btn mini' + (reference.visible ? ' ' : '')}
               aria-pressed={reference.visible}
-              onClick={() => patch({ visible: !reference.visible })}
+              onClick={() => updateReference({ visible: !reference.visible })}
             >
               {reference.visible ? 'Hide' : 'Show'}
             </button>
+            <button className="btn mini" onClick={() => traceReference()}>
+              Trace now
+            </button>
           </div>
 
-          <p className="hint">
-            The <b>Image</b> tool is on — drag on the grid to move the picture.
-          </p>
-
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={coveredOnly}
-              onChange={(e) => setCoveredOnly(e.target.checked)}
-            />
-            Only cells the image covers
-          </label>
-
           <div className="ref-btn-row">
-            <button
-              className="btn primary grow"
-              onClick={() => traceReference({ coveredOnly })}
-            >
-              Trace → palette
-            </button>
-            <button className="btn mini danger" onClick={remove}>
-              Remove
+            <button className="btn mini danger grow" onClick={remove}>
+              Remove image
             </button>
           </div>
         </>

@@ -4,8 +4,8 @@ import {
   dragCells,
   openFileMenu,
   pickTool,
+  refHandles,
   snapshot,
-  tapCell,
   waitForReady,
 } from './helpers';
 
@@ -88,46 +88,75 @@ test('Selburose: parametric star stamps into the grid', async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
-test('Reference image: place, move, and trace onto the palette', async ({ page }) => {
+test('Reference image: on-canvas transform with live trace + palette extract', async ({
+  page,
+}) => {
   await openFileMenu(page, /Reference Image/);
   const panel = page.locator('.ref-panel');
   await expect(panel).toBeVisible();
-
   await panel.locator('input[type="file"]').setInputFiles('tests/fixtures/trace-quad.png');
 
-  // image registered + Image tool auto-selected
+  // image registered, Image tool auto-selected, live trace on
   await expect.poll(async () => (await snapshot(page)).reference !== null).toBe(true);
   let s = await snapshot(page);
   expect(s.tool).toBe('reference');
-  expect(s.reference).toMatchObject({ w: 4, h: 4, visible: true });
+  expect(s.reference).toMatchObject({ w: 4, h: 4, visible: true, live: true, coveredOnly: true });
 
-  // wait for pixels to decode, then trace
-  await expect
-    .poll(() => page.evaluate(() => (window as { __beadloomRef?: { ready(): boolean } }).__beadloomRef?.ready()))
-    .toBe(true);
-
-  await panel.getByRole('button', { name: 'Trace → palette' }).click();
-
+  // live trace fires automatically once the bitmap decodes
+  await expect.poll(async () => (await snapshot(page)).beads).toBeGreaterThan(200);
   s = await snapshot(page);
-  expect(s.beads).toBeGreaterThan(200); // the covered band is filled
-  expect(s.beads).toBeLessThan(s.columns * s.rows); // but not the whole grid
-
-  // the four image quadrants map to different palette colours
+  expect(s.beads).toBeLessThan(s.columns * s.rows);
   const tl = await cellValue(page, 44, 6);
   const tr = await cellValue(page, 56, 6);
-  const bl = await cellValue(page, 44, 18);
-  const br = await cellValue(page, 56, 18);
-  for (const v of [tl, tr, bl, br]) expect(v).toBeGreaterThanOrEqual(0);
-  expect(new Set([tl, tr, bl, br]).size).toBeGreaterThanOrEqual(3);
-  expect(tl).not.toBe(tr);
+  expect(tl).toBeGreaterThanOrEqual(0);
+  expect(tl).not.toBe(tr); // quadrants map to different palette colours
 
-  // dragging with the Image tool moves the picture
+  // --- rotate via the rotation handle ---
+  let h = await refHandles(page);
+  const beforeRot = (await snapshot(page)).reference!.rotationDeg;
+  await page.mouse.move(h.rot.x, h.rot.y);
+  await page.mouse.down();
+  await page.mouse.move(h.rot.x - 90, h.rot.y + 60, { steps: 10 });
+  await page.mouse.up();
+  expect(
+    Math.abs((await snapshot(page)).reference!.rotationDeg - beforeRot),
+  ).toBeGreaterThan(3);
+
+  // --- scale down via the top-left corner handle (drag it toward centre) ---
+  h = await refHandles(page);
+  const beforeScale = (await snapshot(page)).reference!.scale;
+  const c0 = h.corners[0];
+  await page.mouse.move(c0.x, c0.y);
+  await page.mouse.down();
+  await page.mouse.move(
+    c0.x + (h.centre.x - c0.x) * 0.4,
+    c0.y + (h.centre.y - c0.y) * 0.4,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  expect((await snapshot(page)).reference!.scale).toBeLessThan(beforeScale * 0.9);
+
+  // --- drag the image body: it moves and cells re-colour live ---
+  h = await refHandles(page);
   const beforeX = (await snapshot(page)).reference!.x;
-  await pickTool(page, 'Image');
-  await dragCells(page, [50, 12], [62, 12]);
-  expect((await snapshot(page)).reference!.x).toBeGreaterThan(beforeX + 3);
+  await page.mouse.move(h.centre.x, h.centre.y);
+  await page.mouse.down();
+  await page.mouse.move(h.centre.x - 70, h.centre.y, { steps: 8 });
+  await page.mouse.up();
+  s = await snapshot(page);
+  expect(s.reference!.x).toBeLessThan(beforeX - 2);
+  expect(s.beads).toBeGreaterThan(50);
 
-  // remove clears it
-  await panel.getByRole('button', { name: 'Remove' }).click();
+  // --- extract a palette from the image ---
+  await panel.locator('.ref-num input').fill('6');
+  await panel.getByRole('button', { name: 'Replace palette' }).click();
+  s = await snapshot(page);
+  expect(s.paletteName).toBe('From image');
+  expect(s.paletteSize).toBe(6);
+  expect(s.coloursUsed).toBeGreaterThan(0);
+  expect(s.coloursUsed).toBeLessThanOrEqual(6);
+
+  // --- remove ---
+  await panel.getByRole('button', { name: 'Remove image' }).click();
   expect((await snapshot(page)).reference).toBeNull();
 });

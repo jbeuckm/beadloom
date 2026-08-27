@@ -732,6 +732,41 @@ kbd {
   align-items: center;
   justify-content: space-between;
 }
+.ref-panel h4 {
+  margin: 2px 0 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+.ref-thumb {
+  width: 100%;
+  max-height: 88px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.ref-num {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  flex: none;
+}
+.ref-num input {
+  width: 62px;
+  height: 40px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: #fff;
+  font-size: 16px;
+}
+.ref-panel .check {
+  margin: 2px 0;
+}
 .ref-panel .field {
   display: flex;
   flex-direction: column;

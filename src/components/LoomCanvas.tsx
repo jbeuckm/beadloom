@@ -9,12 +9,83 @@ import {
 import { useStore } from '../store/useStore';
 import { drawBase } from '../lib/render';
 import { linePoints, normRect } from '../lib/grid';
-import { EMPTY, PX_PER_COL, type Rect } from '../types';
+import { pointInPolygon } from '../lib/shapes';
+import { paletteLabs, type Lab } from '../lib/color';
+import { traceReferenceGrid } from '../lib/trace';
+import { EMPTY, PX_PER_COL, type Rect, type ReferenceImage } from '../types';
 import { clamp } from '../util';
 import {
   getReferenceImage,
   subscribeReferenceImage,
 } from '../lib/referenceImage';
+
+type RefMode = 'move' | 'scale' | 'rotate' | 'skewX' | 'skewY';
+
+/** Forward transform: image-local pixel (lx, ly) → screen point. */
+function refForwardScreen(
+  ref: ReferenceImage,
+  panX: number,
+  panY: number,
+  sc: number,
+) {
+  const deg = Math.PI / 180;
+  const th = ref.rotationDeg * deg;
+  const cos = Math.cos(th);
+  const sin = Math.sin(th);
+  const bx = Math.tan(ref.skewXDeg * deg);
+  const by = Math.tan(ref.skewYDeg * deg);
+  return (lx: number, ly: number): [number, number] => {
+    const px = (lx - ref.w / 2) * ref.scale;
+    const py = (ly - ref.h / 2) * ref.scale;
+    const sx = px + bx * py;
+    const sy = by * px + py;
+    const rx = sx * cos - sy * sin;
+    const ry = sx * sin + sy * cos;
+    return [panX + (rx + ref.x) * sc, panY + (ry + ref.y) * sc];
+  };
+}
+
+function refHandles(ref: ReferenceImage, panX: number, panY: number, sc: number) {
+  const f = refForwardScreen(ref, panX, panY, sc);
+  const corners: Array<[number, number]> = [
+    f(0, 0),
+    f(ref.w, 0),
+    f(ref.w, ref.h),
+    f(0, ref.h),
+  ];
+  const edges: Array<[number, number]> = [
+    f(ref.w / 2, 0),
+    f(ref.w, ref.h / 2),
+    f(ref.w / 2, ref.h),
+    f(0, ref.h / 2),
+  ];
+  const centre = f(ref.w / 2, ref.h / 2);
+  const tm = edges[0];
+  const dx = tm[0] - centre[0];
+  const dy = tm[1] - centre[1];
+  const L = Math.hypot(dx, dy) || 1;
+  const rot: [number, number] = [tm[0] + (dx / L) * 24, tm[1] + (dy / L) * 24];
+  return { corners, edges, centre, rot };
+}
+
+function hitRefHandle(
+  sx: number,
+  sy: number,
+  ref: ReferenceImage,
+  panX: number,
+  panY: number,
+  sc: number,
+): RefMode | 'none' {
+  const { corners, edges, rot } = refHandles(ref, panX, panY, sc);
+  const near = (p: [number, number], t = 13) =>
+    Math.hypot(sx - p[0], sy - p[1]) <= t;
+  if (near(rot)) return 'rotate';
+  if (corners.some((c) => near(c))) return 'scale';
+  if (near(edges[0]) || near(edges[2])) return 'skewX';
+  if (near(edges[1]) || near(edges[3])) return 'skewY';
+  if (pointInPolygon(sx, sy, corners)) return 'move';
+  return 'none';
+}
 
 const MIN_ZOOM = 0.15;
 const MAX_ZOOM = 14;
@@ -78,9 +149,21 @@ export default function LoomCanvas() {
   >(null);
   const panLast = useRef<{ x: number; y: number } | null>(null);
   const resizing = useRef<null | 'cols' | 'rows'>(null);
-  const refDrag = useRef<
-    null | { gx: number; gy: number; x0: number; y0: number }
-  >(null);
+  const refGesture = useRef<null | {
+    mode: RefMode;
+    edge: number; // +1 top/right handle, -1 bottom/left
+    gx0: number;
+    gy0: number;
+    x0: number;
+    y0: number;
+    scale0: number;
+    rot0: number;
+    d0: number;
+    ang0: number;
+    base: number[][] | null;
+    labs: Lab[];
+  }>(null);
+  const refTraceRaf = useRef(false);
 
   const pendingPaint = useRef<Array<[number, number]>>([]);
   const paintRaf = useRef(false);
@@ -240,34 +323,74 @@ export default function LoomCanvas() {
     // into the reference transform, not the view here).
     void refNonce;
     const refImg = getReferenceImage();
-    if (reference && reference.visible && refImg) {
+    if (reference && reference.visible) {
       const deg = Math.PI / 180;
       const dw = reference.w * reference.scale; // destination size, grid columns
       const dh = reference.h * reference.scale;
-      ctx.save();
-      ctx.translate(view.panX, view.panY);
-      ctx.scale(scale, scale);
-      ctx.translate(reference.x, reference.y);
-      ctx.rotate(reference.rotationDeg * deg);
-      ctx.transform(
-        1,
-        Math.tan(reference.skewYDeg * deg),
-        Math.tan(reference.skewXDeg * deg),
-        1,
-        0,
-        0,
-      );
-      ctx.globalAlpha = clamp(reference.opacity, 0, 1);
-      ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(refImg, -dw / 2, -dh / 2, dw, dh);
-      if (tool === 'reference') {
-        ctx.globalAlpha = 0.9;
-        ctx.strokeStyle = '#1268ff';
-        ctx.lineWidth = 1.5 / scale;
-        ctx.setLineDash([6 / scale, 4 / scale]);
-        ctx.strokeRect(-dw / 2, -dh / 2, dw, dh);
+      if (refImg) {
+        ctx.save();
+        ctx.translate(view.panX, view.panY);
+        ctx.scale(scale, scale);
+        ctx.translate(reference.x, reference.y);
+        ctx.rotate(reference.rotationDeg * deg);
+        ctx.transform(
+          1,
+          Math.tan(reference.skewYDeg * deg),
+          Math.tan(reference.skewXDeg * deg),
+          1,
+          0,
+          0,
+        );
+        ctx.globalAlpha = clamp(reference.opacity, 0, 1);
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(refImg, -dw / 2, -dh / 2, dw, dh);
+        ctx.restore();
       }
-      ctx.restore();
+
+      // transform box + handles (screen space), only with the Image tool active
+      if (tool === 'reference') {
+        const { corners, edges, rot } = refHandles(
+          reference,
+          view.panX,
+          view.panY,
+          scale,
+        );
+        ctx.save();
+        ctx.strokeStyle = '#1268ff';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(corners[0][0], corners[0][1]);
+        for (let i = 1; i < 4; i++) ctx.lineTo(corners[i][0], corners[i][1]);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(edges[0][0], edges[0][1]);
+        ctx.lineTo(rot[0], rot[1]);
+        ctx.stroke();
+
+        const dot = (p: [number, number], r: number, fill: string) => {
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+          ctx.fillStyle = fill;
+          ctx.fill();
+          ctx.strokeStyle = '#1268ff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        };
+        const box = (p: [number, number]) => {
+          ctx.fillStyle = '#fff';
+          ctx.strokeStyle = '#1268ff';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(p[0] - 5, p[1] - 5, 10, 10);
+          ctx.strokeRect(p[0] - 5, p[1] - 5, 10, 10);
+        };
+        corners.forEach(box);
+        edges.forEach((p) => dot(p, 5, '#dbe7ff'));
+        dot(rot, 6, '#fff');
+        ctx.restore();
+      }
     }
 
     const cellH = scale * asp;
@@ -423,13 +546,51 @@ export default function LoomCanvas() {
     const d = S().design;
     const inb = c >= 0 && r >= 0 && c < d.loom.columns && r < d.loom.rows;
 
-    // reference tool: drag the placed image around
+    // reference tool: transform the placed image via its on-canvas handles
     if (tool === 'reference') {
       const ref = S().reference;
-      if (ref) {
-        const g = toGridUnits(e.clientX, e.clientY);
-        refDrag.current = { gx: g.gx, gy: g.gy, x0: ref.x, y0: ref.y };
+      if (!ref || !ref.visible) return;
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const vv = S().view;
+      const sc = PX_PER_COL * vv.zoom;
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const mode = hitRefHandle(sx, sy, ref, vv.panX, vv.panY, sc);
+      if (mode === 'none') return;
+      const g = toGridUnits(e.clientX, e.clientY);
+      const { edges } = refHandles(ref, vv.panX, vv.panY, sc);
+      let edge = 1;
+      if (mode === 'skewX') {
+        edge =
+          Math.hypot(sx - edges[2][0], sy - edges[2][1]) <
+          Math.hypot(sx - edges[0][0], sy - edges[0][1])
+            ? -1
+            : 1;
+      } else if (mode === 'skewY') {
+        edge =
+          Math.hypot(sx - edges[3][0], sy - edges[3][1]) <
+          Math.hypot(sx - edges[1][0], sy - edges[1][1])
+            ? -1
+            : 1;
       }
+      const live = ref.live;
+      refGesture.current = {
+        mode,
+        edge,
+        gx0: g.gx,
+        gy0: g.gy,
+        x0: ref.x,
+        y0: ref.y,
+        scale0: ref.scale,
+        rot0: ref.rotationDeg,
+        d0: Math.max(1e-3, Math.hypot(g.gx - ref.x, g.gy - ref.y)),
+        ang0: Math.atan2(g.gy - ref.y, g.gx - ref.x),
+        base: live ? S().design.cells.data.map((row) => row.slice()) : null,
+        labs: live
+          ? paletteLabs(S().design.palette.colors.map((c) => c.hex))
+          : [],
+      };
+      if (live) S().pushHistory();
       return;
     }
 
@@ -514,13 +675,63 @@ export default function LoomCanvas() {
       return;
     }
 
-    if (refDrag.current) {
-      const g = toGridUnits(e.clientX, e.clientY);
-      const d = refDrag.current;
-      S().updateReference({
-        x: d.x0 + (g.gx - d.gx),
-        y: d.y0 + (g.gy - d.gy),
-      });
+    if (refGesture.current) {
+      const g = refGesture.current;
+      const p = toGridUnits(e.clientX, e.clientY);
+      const ref = S().reference;
+      if (!ref) return;
+
+      let patch: Partial<ReferenceImage> = {};
+      if (g.mode === 'move') {
+        patch = { x: g.x0 + (p.gx - g.gx0), y: g.y0 + (p.gy - g.gy0) };
+      } else if (g.mode === 'scale') {
+        const dNow = Math.hypot(p.gx - g.x0, p.gy - g.y0);
+        patch = { scale: Math.max((g.scale0 * dNow) / g.d0, 2 / ref.w) };
+      } else if (g.mode === 'rotate') {
+        const ang = Math.atan2(p.gy - g.y0, p.gx - g.x0);
+        let deg = g.rot0 + ((ang - g.ang0) * 180) / Math.PI;
+        deg = ((((deg + 180) % 360) + 360) % 360) - 180;
+        patch = { rotationDeg: deg };
+      } else {
+        // skew — undo translate + rotation, then read the offset in skew-space
+        const th = (g.rot0 * Math.PI) / 180;
+        const cos = Math.cos(-th);
+        const sin = Math.sin(-th);
+        const dx = p.gx - g.x0;
+        const dy = p.gy - g.y0;
+        const qx = dx * cos - dy * sin;
+        const qy = dx * sin + dy * cos;
+        if (g.mode === 'skewX') {
+          const bx = (-g.edge * 2 * qx) / (ref.h * g.scale0 || 1e-6);
+          patch = { skewXDeg: clamp((Math.atan(bx) * 180) / Math.PI, -70, 70) };
+        } else {
+          const by = (g.edge * 2 * qy) / (ref.w * g.scale0 || 1e-6);
+          patch = { skewYDeg: clamp((Math.atan(by) * 180) / Math.PI, -70, 70) };
+        }
+      }
+      S().updateReference(patch);
+
+      // live re-trace from the pre-gesture grid (throttled)
+      if (g.base && g.labs.length && !refTraceRaf.current) {
+        refTraceRaf.current = true;
+        requestAnimationFrame(() => {
+          refTraceRaf.current = false;
+          const r = S().reference;
+          if (!r || !g.base) return;
+          const { columns, rows, cellAspect } = S().design.loom;
+          S().replaceGrid(
+            traceReferenceGrid(
+              g.base,
+              r,
+              g.labs,
+              columns,
+              rows,
+              cellAspect,
+              r.coveredOnly,
+            ),
+          );
+        });
+      }
       return;
     }
 
@@ -567,7 +778,7 @@ export default function LoomCanvas() {
     }
     if (pointers.current.size < 2) pinch.current = null;
     panLast.current = null;
-    refDrag.current = null;
+    refGesture.current = null;
 
     if (painting.current) {
       painting.current = false;

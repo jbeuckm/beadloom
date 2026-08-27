@@ -20,11 +20,9 @@ import {
 } from '../types';
 import { makeColor, makeRainbowPalette } from '../lib/palettes';
 import { emptyGrid, floodFill, linePoints, readStamp, resizeGrid } from '../lib/grid';
-import { nearestIndex, paletteLabs } from '../lib/color';
-import {
-  sampleReferenceImage,
-  setReferenceImageSrc,
-} from '../lib/referenceImage';
+import { paletteLabs } from '../lib/color';
+import { traceReferenceGrid } from '../lib/trace';
+import { setReferenceImageSrc } from '../lib/referenceImage';
 import {
   parseDesign,
   serializeDesign,
@@ -399,38 +397,20 @@ export const useStore = create<StoreState>()(
       const s = get();
       const ref = s.reference;
       if (!ref) return;
-      const coveredOnly = opts?.coveredOnly ?? true;
       const { columns, rows, cellAspect } = s.design.loom;
       const labs = paletteLabs(s.design.palette.colors.map((c) => c.hex));
-      if (!labs.length) return;
-
-      const th = (ref.rotationDeg * Math.PI) / 180;
-      const cos = Math.cos(-th);
-      const sin = Math.sin(-th);
-      const b = Math.tan((ref.skewXDeg * Math.PI) / 180);
-      const cc = Math.tan((ref.skewYDeg * Math.PI) / 180);
-      const det = 1 - b * cc || 1;
-      const s2 = ref.scale || 1e-6;
-
-      const entries: Array<[number, number, number]> = [];
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < columns; c++) {
-          const gx = c + 0.5 - ref.x;
-          const gy = (r + 0.5) * cellAspect - ref.y;
-          const rx = gx * cos - gy * sin;
-          const ry = gx * sin + gy * cos;
-          const ux = (rx - b * ry) / det;
-          const uy = (-cc * rx + ry) / det;
-          const ix = ux / s2 + ref.w / 2;
-          const iy = uy / s2 + ref.h / 2;
-          const px = sampleReferenceImage(ix, iy);
-          if (!px || (coveredOnly && px[3] < 8)) continue;
-          entries.push([c, r, nearestIndex([px[0], px[1], px[2]], labs)]);
-        }
-      }
-      if (!entries.length) return;
+      const next = traceReferenceGrid(
+        s.design.cells.data,
+        ref,
+        labs,
+        columns,
+        rows,
+        cellAspect,
+        opts?.coveredOnly ?? ref.coveredOnly,
+      );
+      if (next === s.design.cells.data) return;
       s.pushHistory();
-      s.setCells(entries);
+      s.replaceGrid(next);
     },
 
     copySelection: () =>

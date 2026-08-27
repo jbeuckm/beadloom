@@ -96,6 +96,8 @@ export interface ReferenceImage {
   skewYDeg: number;
   opacity: number; // 0..1
   visible: boolean;
+  live: boolean; // re-trace the grid continuously while the image is transformed
+  coveredOnly: boolean; // trace only cells the image actually covers
 }
 
 /** Inclusive, normalised cell rectangle. */

@@ -23,11 +23,13 @@ on a loom.
     (`B3/S23` by default, editable), toroidal wrap, adjustable speed, single-step
     or run, and a random seeder. New cells take the active colour or a vote of
     their neighbours. Every step is undoable.
-  - **Reference Image** — drop a photo behind the grid, position it with the
-    **Image** tool (drag) plus width / rotation / skew / opacity, then
-    **Trace → palette** to fill every covered cell with its nearest palette
-    colour (CIE-Lab match). The image is a working aid — it is not saved into
-    design files.
+  - **Reference Image** — drop a photo behind the grid and transform it directly
+    on the canvas with the **Image** tool: drag the picture to move it, use the
+    corner / edge / rotation handles to scale, skew and rotate. With **Live**
+    trace on (default) every covered cell re-colours to its nearest palette
+    colour (CIE-Lab) as you manipulate the image. The side panel also lifts an
+    N-colour **palette straight off the image** (median cut). The image is a
+    working aid — it is not saved into design files.
 - **Palettes**: build / edit / reorder / delete colours (name, hex, optional bead
   code). Default is a **10-colour rainbow**. The **Palette Library** dialog holds
   presets — including a curated **Toho Round 11/0** seed-bead library (with the
@@ -83,6 +85,8 @@ src/
     life.ts           Game of Life step / rule parsing / random seed
     shapes.ts         Selburose star polygon + rasteriser
     color.ts          RGB→Lab, nearest-palette-colour match
+    trace.ts          reference image → grid (inverse transform + sample)
+    quantize.ts       median-cut palette extraction
     referenceImage.ts session-only decoded reference bitmap + sampler
     render.ts         shared canvas draw of the "document" layer (screen + PNG)
     designFormat.ts   (de)serialise + validate + file download / picker + PNG

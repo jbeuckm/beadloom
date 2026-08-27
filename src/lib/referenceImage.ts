@@ -82,3 +82,18 @@ export function sampleReferenceImage(
   const d = pixels.data;
   return [d[o], d[o + 1], d[o + 2], d[o + 3]];
 }
+
+/** Up to `max` evenly-spaced opaque pixels, for palette extraction. */
+export function referenceSamples(max = 4000): Array<[number, number, number]> {
+  if (!pixels) return [];
+  const total = pixels.width * pixels.height;
+  const step = Math.max(1, Math.floor(total / max));
+  const d = pixels.data;
+  const out: Array<[number, number, number]> = [];
+  for (let i = 0; i < total; i += step) {
+    const o = i * 4;
+    if (d[o + 3] < 16) continue;
+    out.push([d[o], d[o + 1], d[o + 2]]);
+  }
+  return out;
+}

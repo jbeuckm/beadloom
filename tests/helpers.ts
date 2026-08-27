@@ -40,8 +40,12 @@ export async function snapshot(page: Page) {
             y: s.reference.y,
             scale: s.reference.scale,
             rotationDeg: s.reference.rotationDeg,
+            skewXDeg: s.reference.skewXDeg,
+            skewYDeg: s.reference.skewYDeg,
             opacity: s.reference.opacity,
             visible: s.reference.visible,
+            live: s.reference.live,
+            coveredOnly: s.reference.coveredOnly,
           }
         : null,
       highlightRow: s.highlightRow,
@@ -88,6 +92,43 @@ export async function paletteColors(
 export async function openPaletteLibrary(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Library' }).click();
   await page.locator('.modal', { hasText: 'Palette Library' }).waitFor();
+}
+
+/** Screen positions of the reference-image transform handles (mirrors LoomCanvas). */
+export async function refHandles(page: Page) {
+  const box = await page.locator('.canvas-wrap canvas').boundingBox();
+  if (!box) throw new Error('canvas not found');
+  const s = await snapshot(page);
+  const r = s.reference;
+  if (!r) throw new Error('no reference image');
+  const sc = PX_PER_COL * s.view.zoom;
+  const deg = Math.PI / 180;
+  const th = r.rotationDeg * deg;
+  const cos = Math.cos(th);
+  const sin = Math.sin(th);
+  const bx = Math.tan(r.skewXDeg * deg);
+  const by = Math.tan(r.skewYDeg * deg);
+  const f = (lx: number, ly: number) => {
+    const px = (lx - r.w / 2) * r.scale;
+    const py = (ly - r.h / 2) * r.scale;
+    const sx = px + bx * py;
+    const sy = by * px + py;
+    const rx = sx * cos - sy * sin;
+    const ry = sx * sin + sy * cos;
+    return {
+      x: box.x + s.view.panX + (rx + r.x) * sc,
+      y: box.y + s.view.panY + (ry + r.y) * sc,
+    };
+  };
+  const corners = [f(0, 0), f(r.w, 0), f(r.w, r.h), f(0, r.h)];
+  const edges = [f(r.w / 2, 0), f(r.w, r.h / 2), f(r.w / 2, r.h), f(0, r.h / 2)];
+  const centre = f(r.w / 2, r.h / 2);
+  const tm = edges[0];
+  const dx = tm.x - centre.x;
+  const dy = tm.y - centre.y;
+  const L = Math.hypot(dx, dy) || 1;
+  const rot = { x: tm.x + (dx / L) * 24, y: tm.y + (dy / L) * 24 };
+  return { corners, edges, centre, rot };
 }
 
 /** Page-pixel centre of a grid cell, using the live pan/zoom transform. */
