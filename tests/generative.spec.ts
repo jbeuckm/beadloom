@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
-test('Game of Life: runs inside a selection, else on a fresh layer', async ({
+test('Cellular automata: runs inside a selection, else on a fresh layer', async ({
   page,
 }) => {
   await pickTool(page, 'Pen');
@@ -33,8 +33,8 @@ test('Game of Life: runs inside a selection, else on a fresh layer', async ({
       .getState()
       .setSelection({ c0: 4, r0: 4, c1: 8, r1: 6 }),
   );
-  await pickTool(page, 'Life');
-  const modal = page.locator('.right-dock', { hasText: 'Game of Life' });
+  await pickTool(page, 'Cells');
+  const modal = page.locator('.right-dock', { hasText: 'Cellular Automata' });
   await expect(modal).toBeVisible();
   await modal.getByRole('combobox').first().selectOption('conway');
   await modal.getByRole('button', { name: 'Step' }).click();
@@ -83,11 +83,11 @@ test('Game of Life: runs inside a selection, else on a fresh layer', async ({
 });
 
 // ---------------------------------------------------------------------------
-test('Game of Life: rule catalogue + a 1-D Wolfram tapestry', async ({
+test('Cellular automata: rule catalogue + a 1-D Wolfram tapestry', async ({
   page,
 }) => {
-  await pickTool(page, 'Life');
-  const modal = page.locator('.right-dock', { hasText: 'Game of Life' });
+  await pickTool(page, 'Cells');
+  const modal = page.locator('.right-dock', { hasText: 'Cellular Automata' });
   await expect(modal).toBeVisible();
   const ruleSelect = modal.getByRole('combobox').first();
 

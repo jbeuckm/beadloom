@@ -174,7 +174,7 @@ export const RULE_CATALOG: RuleDef[] = [
     klass: 4,
     featured: false,
     blurb:
-      'Small localised structures glide over a flickering background and bounce off one another — a 1-D cousin of Game-of-Life gliders.',
+      'Small localised structures glide over a flickering background and bounce off one another — a 1-D cousin of the gliders in Conway’s rule.',
   },
   {
     id: 'w150',

@@ -219,7 +219,7 @@ export interface StoreState {
   replaceGrid: (data: number[][]) => void;
   setCells: (entries: Array<[number, number, number]>) => void;
 
-  // Game of Life — evolves the selection in place when one exists, otherwise a
+  // Cellular automata — evolves the selection in place when one exists, otherwise a
   // dedicated full-grid layer created on the first write.
   lifeLayerId: string | null;
   lifeInput: () => number[][];
@@ -591,7 +591,7 @@ export const useStore = create<StoreState>()(
         return { ...setActiveRaster(s, fixed), selection: null };
       }),
 
-    // ---- Game of Life -------------------------------------------------
+    // ---- Cellular automata -------------------------------------------------
     // With a selection, the simulation runs inside its bounding box (mask cells
     // only are read/written) on the active layer. Without one, it runs on a
     // full-grid layer of its own, created lazily on the first write so opening

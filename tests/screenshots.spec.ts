@@ -143,13 +143,13 @@ test('guided walkthrough with screenshots', async ({ page }) => {
   await page.locator('.right-dock').getByRole('button', { name: 'Done' }).click();
   await shot(page, '16-selburose-inserted');
 
-  // 17 — Game of Life -----------------------------------------
-  await pickTool(page, 'Life');
-  const life = page.locator('.right-dock', { hasText: 'Game of Life' });
+  // 17 — Cellular automata -----------------------------------------
+  await pickTool(page, 'Cells');
+  const life = page.locator('.right-dock', { hasText: 'Cellular Automata' });
   await life.getByRole('combobox').first().selectOption('conway');
   await life.getByRole('button', { name: 'Seed grid' }).click();
   await life.getByRole('button', { name: 'Step' }).click();
-  await shot(page, '17-game-of-life');
+  await shot(page, '17-cellular-automata');
   await life.getByRole('button', { name: 'Done' }).click();
   await expect(life).toBeHidden();
 

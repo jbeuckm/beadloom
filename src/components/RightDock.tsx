@@ -11,7 +11,7 @@ const TITLES: Record<string, string> = {
   selburose: 'Selburose',
   shape: 'Shape',
   layers: 'Layers',
-  life: 'Game of Life',
+  life: 'Cellular Automata',
 };
 
 export default function RightDock() {

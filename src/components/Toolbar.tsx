@@ -73,12 +73,12 @@ export default function Toolbar() {
       <button
         className={'tool' + (rightPanel === 'life' ? ' active' : '')}
         onClick={() => s.setRightPanel(rightPanel === 'life' ? null : 'life')}
-        title="Game of Life"
-        aria-label="Game of Life"
+        title="Cellular Automata"
+        aria-label="Cellular Automata"
         aria-pressed={rightPanel === 'life'}
       >
         <Icon name="dice" />
-        <span className="lb">Life</span>
+        <span className="lb">Cells</span>
       </button>
       <button
         className={'tool' + (rightPanel === 'reference' ? ' active' : '')}
