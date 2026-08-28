@@ -27,3 +27,11 @@ if (import.meta.env.DEV) {
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
+
+// PWA: register the runtime-cache service worker in production builds. Its
+// URL is resolved against the page, so the scope follows the deploy sub-path.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
