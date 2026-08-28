@@ -88,10 +88,14 @@ test('filled rectangle tool paints a solid block', async ({ page }) => {
 });
 
 test('marquee select -> copy -> paste duplicates a block elsewhere', async ({ page }) => {
-  // paint a distinctive 3x3 block in colour #7
+  // paint a distinctive 3x3 block in colour #7 (flatten the box into raster)
   await page.locator('.swatch').nth(7).click();
   await pickTool(page, 'Box+');
   await dragCells(page, [1, 1], [3, 3]);
+  await page
+    .locator('.right-dock')
+    .getByRole('button', { name: 'Flatten to beads' })
+    .click();
   expect((await snapshot(page)).beads).toBe(9);
 
   // select it, copy, paste at (10,10)
@@ -112,13 +116,44 @@ test('marquee select -> copy -> paste duplicates a block elsewhere', async ({ pa
   expect(await cellValue(page, 12, 12)).toBe(7);
 });
 
+test('pasting a stamp with transparent cells leaves the target beads intact', async ({
+  page,
+}) => {
+  // a solid run of colour 2 that the paste will land on top of
+  await page.locator('.swatch').nth(2).click();
+  await pickTool(page, 'Pen');
+  await dragCells(page, [5, 10], [9, 10]); // cols 5..9, row 10
+  expect((await snapshot(page)).beads).toBe(5);
+
+  // a stamp with a hole in the middle: 7 . 7
+  await page.locator('.swatch').nth(7).click();
+  await tapCell(page, 1, 1);
+  await tapCell(page, 3, 1);
+  await pickTool(page, 'Select');
+  await dragCells(page, [1, 1], [3, 1]);
+  await toolButton(page, 'Copy').click();
+
+  await toolButton(page, 'Paste').click();
+  await tapCell(page, 5, 10); // stamp covers cols 5,6,7 of the run
+
+  expect(await cellValue(page, 5, 10)).toBe(7); // opaque stamp cell wrote
+  expect(await cellValue(page, 6, 10)).toBe(2); // transparent stamp cell kept the target
+  expect(await cellValue(page, 7, 10)).toBe(7);
+  expect(await cellValue(page, 8, 10)).toBe(2); // outside the stamp, untouched
+  expect((await snapshot(page)).beads).toBe(7); // 5 run + 2 stamp source, none cleared
+});
+
 test('magic wand selects a contiguous region and deletes just that shape', async ({
   page,
 }) => {
-  // a filled 4x4 block of colour 2, plus one stray bead of colour 5 outside it
+  // a filled 4x4 block of colour 2 (flattened to raster), plus one stray bead
   await page.locator('.swatch').nth(2).click();
   await pickTool(page, 'Box+');
   await dragCells(page, [4, 4], [7, 7]);
+  await page
+    .locator('.right-dock')
+    .getByRole('button', { name: 'Flatten to beads' })
+    .click();
   await page.locator('.swatch').nth(5).click();
   await pickTool(page, 'Pen');
   await tapCell(page, 10, 4);
@@ -201,6 +236,27 @@ test('save to a slot, start a new design, then reopen the saved one', async ({ p
     .getByRole('button', { name: 'Open' })
     .click();
   expect((await snapshot(page)).beads).toBe(painted);
+});
+
+test('New warns about unsaved changes before the size dialog opens', async ({
+  page,
+}) => {
+  await pickTool(page, 'Pen');
+  await tapCell(page, 3, 3);
+  expect((await snapshot(page)).dirty).toBe(true);
+
+  // dismiss the confirm -> the New dialog never appears, design untouched
+  page.once('dialog', (d) => d.dismiss());
+  await openFileMenu(page, /\+ New/);
+  await expect(page.locator('.modal', { hasText: 'New Design' })).toHaveCount(0);
+  expect((await snapshot(page)).beads).toBe(1);
+
+  // accept the confirm -> now the size dialog opens
+  page.once('dialog', (d) => d.accept());
+  await openFileMenu(page, /\+ New/);
+  await expect(page.locator('.modal', { hasText: 'New Design' })).toBeVisible();
+  await page.locator('.modal').getByRole('button', { name: 'Create' }).click();
+  expect((await snapshot(page)).beads).toBe(0);
 });
 
 test('export produces a valid beadloom-design JSON file', async ({ page }) => {

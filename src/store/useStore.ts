@@ -18,6 +18,8 @@ import {
   type RightPanelId,
   type SelburoseLayer,
   type SelburoseObject,
+  type ShapeLayer,
+  type ShapeObject,
   type Settings,
   type Snapshot,
   type Stamp,
@@ -30,13 +32,15 @@ import {
   rasterCount,
   remapLayerColors,
   selburoseLayerCells,
+  shapeLayerCells,
 } from '../lib/layers';
 import { snapSelburoseCenter } from '../lib/shapes';
 import { makeColor, makeRainbowPalette } from '../lib/palettes';
 import { emptyGrid, floodFill, linePoints, readStamp, resizeGrid } from '../lib/grid';
 import { paletteLabs } from '../lib/color';
-import { traceImageLayer } from '../lib/trace';
-import { revokeImage } from '../lib/referenceImage';
+import { adjustRgb, traceImageLayer } from '../lib/trace';
+import { paletteFromImage, rgbToHex } from '../lib/quantize';
+import { imageSamples, revokeImage, subscribeImages } from '../lib/referenceImage';
 import {
   parseDesign,
   serializeDesign,
@@ -134,12 +138,35 @@ const patchStar = (
   dirty: true,
 });
 
+const findShape = (s: StoreState, id: string): ShapeObject | undefined => {
+  const l = s.design.layers.find((x) => x.kind === 'shape' && x.id === id);
+  return l && l.kind === 'shape' ? l.shape : undefined;
+};
+
+/** State patch that merges a patch into one shape layer's shape object. */
+const patchShapeObj = (
+  s: StoreState,
+  id: string,
+  patch: Partial<ShapeObject>,
+): Partial<StoreState> => ({
+  design: {
+    ...s.design,
+    layers: s.design.layers.map((l) =>
+      l.kind === 'shape' && l.id === id
+        ? { ...l, shape: { ...l.shape, ...patch, id: l.shape.id } }
+        : l,
+    ),
+  },
+  dirty: true,
+});
+
 // --------------------------------------------------------------------------
 
 export interface StoreState {
   design: BeadDesign;
   designKey: string; // changes on new/open to let the canvas re-fit
   fitNonce: number; // bump to request a "fit to view"
+  imageEpoch: number; // bumps when an image-layer bitmap decodes (trace refresh)
   activeLayer: string; // id of the active raster layer (paint target)
   activeColor: number; // index into design.palette.colors
   tool: ToolId;
@@ -151,6 +178,9 @@ export interface StoreState {
   editingSelburose: string | null; // id of the star the Selburose panel edits
   selectedImageId: string | null;
   editingImage: string | null; // id of the image layer the Image panel edits
+  selectedShapeId: string | null;
+  editingShape: string | null; // id of the line/box the Shape panel edits
+  lineThickness: number; // default bead width for new line / box-outline shapes
   rightPanel: RightPanelId | null; // the panel docked to the right edge
   highlightRow: number | null;
   cursor: { c: number; r: number } | null;
@@ -189,6 +219,13 @@ export interface StoreState {
   replaceGrid: (data: number[][]) => void;
   setCells: (entries: Array<[number, number, number]>) => void;
 
+  // Game of Life — evolves the selection in place when one exists, otherwise a
+  // dedicated full-grid layer created on the first write.
+  lifeLayerId: string | null;
+  lifeInput: () => number[][];
+  lifeOutput: (next: number[][], withHistory: boolean) => void;
+  lifeEnd: () => void;
+
   // image layers (self-managed history)
   addImageLayer: (
     p: Omit<ImageLayer, 'id' | 'kind' | 'name' | 'visible'>,
@@ -199,10 +236,15 @@ export interface StoreState {
   flattenImageLayer: (id: string) => void;
 
   // clipboard (self-managed history)
+  starClipboard: SelburoseObject | null; // a copied selburose, ready to paste
   copySelection: () => void;
   cutSelection: () => void;
   deleteSelection: () => void;
   pasteAt: (c: number, r: number) => void;
+  pasteStar: () => void;
+  // Move the selected selburose / image layer by a grid-unit delta. `coalesce`
+  // skips the history checkpoint (for held-arrow auto-repeat).
+  nudgeSelected: (dx: number, dy: number, coalesce: boolean) => void;
 
   // region transforms (self-managed history)
   flip: (axis: 'h' | 'v', scope: 'all' | 'selection') => void;
@@ -231,6 +273,24 @@ export interface StoreState {
   recolorSelburose: (id: string, colorIndex: number) => void;
   removeSelburose: (id: string) => void;
   flattenSelburose: (id: string) => void;
+
+  // line / box / poly shape overlay objects
+  setLineThickness: (n: number) => void;
+  addShape: (p: Omit<ShapeObject, 'id'>) => void;
+  openShapeEditor: (id: string) => void;
+  closeShapeEditor: () => void;
+  selectShape: (id: string | null) => void;
+  moveShape: (id: string, dx: number, dy: number) => void;
+  updateShape: (id: string, patch: Partial<ShapeObject>) => void;
+  transformShape: (id: string, kind: 'flipH' | 'flipV' | 'rot180') => void;
+  recolorShape: (id: string, colorIndex: number) => void;
+  removeShape: (id: string) => void;
+  flattenShape: (id: string) => void;
+  // arbitrary-polygon point editing
+  appendShapePoint: (id: string, pt: [number, number]) => void;
+  moveShapePoint: (id: string, i: number, pt: [number, number]) => void;
+  insertShapePoint: (id: string, i: number, pt: [number, number]) => void;
+  removeShapePoint: (id: string, i: number) => void;
 
   // grid size — history managed by caller
   setColumns: (n: number) => void;
@@ -309,6 +369,8 @@ const applySnap = (s: StoreState, snp: Snapshot): Partial<StoreState> => {
     editingSelburose: null,
     selectedImageId: null,
     editingImage: null,
+    selectedShapeId: null,
+    editingShape: null,
     dirty: true,
   };
 };
@@ -342,17 +404,23 @@ export const useStore = create<StoreState>()(
     design: initialDesign,
     designKey: uid(),
     fitNonce: 0,
+    imageEpoch: 0,
     activeLayer: firstRasterId(initialDesign),
     activeColor: 0,
     tool: 'pen',
     pasteMode: false,
     selection: null,
     selectionMask: null,
+    lifeLayerId: null,
     clipboard: null,
+    starClipboard: null,
     selectedSelburoseId: null,
     editingSelburose: null,
     selectedImageId: null,
     editingImage: null,
+    selectedShapeId: null,
+    editingShape: null,
+    lineThickness: 1,
     rightPanel: null,
     highlightRow: null,
     cursor: null,
@@ -397,7 +465,19 @@ export const useStore = create<StoreState>()(
     canUndo: () => get().undoStack.length > 0,
     canRedo: () => get().redoStack.length > 0,
 
-    setTool: (t) => set({ tool: t, pasteMode: false }),
+    setTool: (t) =>
+      set((s) => {
+        // Switching to a drawing tool drops any object selection so the next
+        // palette pick chooses a colour to draw with, not a recolour.
+        if (t === 'select' || t === 'pan')
+          return { tool: t, pasteMode: false };
+        return {
+          tool: t,
+          pasteMode: false,
+          selectedSelburoseId: null,
+          selectedShapeId: null,
+        };
+      }),
     setActiveColor: (i) =>
       set((s) => ({
         activeColor: clamp(i, 0, s.design.palette.colors.length - 1),
@@ -511,6 +591,95 @@ export const useStore = create<StoreState>()(
         return { ...setActiveRaster(s, fixed), selection: null };
       }),
 
+    // ---- Game of Life -------------------------------------------------
+    // With a selection, the simulation runs inside its bounding box (mask cells
+    // only are read/written) on the active layer. Without one, it runs on a
+    // full-grid layer of its own, created lazily on the first write so opening
+    // and closing the panel leaves nothing behind.
+    lifeInput: () => {
+      const s = get();
+      const { columns, rows } = s.design.loom;
+      const sel = s.selection;
+      if (sel) {
+        const base = activeRasterData(s) ?? emptyGrid(columns, rows);
+        const out: number[][] = [];
+        for (let r = sel.r0; r <= sel.r1; r++) {
+          const row: number[] = [];
+          for (let c = sel.c0; c <= sel.c1; c++) {
+            const inMask =
+              !s.selectionMask || s.selectionMask.has(r * columns + c);
+            row.push(inMask ? base[r]?.[c] ?? EMPTY : EMPTY);
+          }
+          out.push(row);
+        }
+        return out;
+      }
+      const working = s.lifeLayerId
+        ? (s.design.layers.find(
+            (l) => l.id === s.lifeLayerId && l.kind === 'raster',
+          ) as RasterLayer | undefined)
+        : undefined;
+      return working ? working.data : emptyGrid(columns, rows);
+    },
+
+    lifeOutput: (next, withHistory) => {
+      if (withHistory) get().pushHistory();
+      set((s) => {
+        const { columns, rows } = s.design.loom;
+        const sel = s.selection;
+        if (sel) {
+          const i = activeRasterIdx(s);
+          if (i < 0) return {};
+          const cur = (s.design.layers[i] as RasterLayer).data;
+          const data = cur.map((row) => row.slice());
+          for (let r = 0; r < next.length; r++) {
+            const gr = sel.r0 + r;
+            if (gr < 0 || gr >= rows) continue;
+            for (let c = 0; c < next[r].length; c++) {
+              const gc = sel.c0 + c;
+              if (gc < 0 || gc >= columns) continue;
+              if (s.selectionMask && !s.selectionMask.has(gr * columns + gc))
+                continue;
+              data[gr][gc] = next[r][c];
+            }
+          }
+          const layers = s.design.layers.slice();
+          layers[i] = { ...(s.design.layers[i] as RasterLayer), data };
+          return { design: { ...s.design, layers }, dirty: true };
+        }
+        const fit =
+          next.length === rows && next.every((row) => row.length === columns)
+            ? next
+            : resizeGrid(next, columns, rows);
+        const layers = s.design.layers.slice();
+        const idx = s.lifeLayerId
+          ? layers.findIndex(
+              (l) => l.id === s.lifeLayerId && l.kind === 'raster',
+            )
+          : -1;
+        if (idx < 0) {
+          const layer = emptyRasterLayer(
+            nextLayerName(layers, 'raster'),
+            columns,
+            rows,
+          );
+          const at = activeRasterIdx(s);
+          const insertAt = at < 0 ? layers.length : at + 1;
+          layers.splice(insertAt, 0, { ...layer, data: fit });
+          return {
+            design: { ...s.design, layers },
+            activeLayer: layer.id,
+            lifeLayerId: layer.id,
+            dirty: true,
+          };
+        }
+        layers[idx] = { ...(layers[idx] as RasterLayer), data: fit };
+        return { design: { ...s.design, layers }, dirty: true };
+      });
+    },
+
+    lifeEnd: () => set({ lifeLayerId: null }),
+
     setCells: (entries) =>
       set((s) => {
         if (!entries.length) return {};
@@ -554,6 +723,8 @@ export const useStore = create<StoreState>()(
           selectionMask: null,
           selectedSelburoseId: null,
           editingSelburose: null,
+          selectedShapeId: null,
+          editingShape: null,
           dirty: true,
         };
       });
@@ -583,6 +754,8 @@ export const useStore = create<StoreState>()(
               selectionMask: null,
               selectedSelburoseId: null,
               editingSelburose: null,
+              selectedShapeId: null,
+              editingShape: null,
             }
           : {},
       ),
@@ -596,8 +769,31 @@ export const useStore = create<StoreState>()(
       );
       if (idx < 0) return;
       const layer = s0.design.layers[idx] as ImageLayer;
-      const { columns, rows, cellAspect } = s0.design.loom;
-      const labs = paletteLabs(s0.design.palette.colors.map((c) => c.hex));
+
+      // "proposed" mode: adopt the image-derived palette first, then trace
+      // against it. "current" mode traces against the existing palette.
+      if (layer.paletteMode === 'proposed') {
+        const smp = imageSamples(layer.src).map((c) => adjustRgb(c, layer));
+        const proposed = smp.length
+          ? paletteFromImage(smp, layer.paletteColors)
+          : [];
+        if (proposed.length)
+          get().applyPalette({
+            id: uid(),
+            name: 'From image',
+            colors: proposed.map((rgb, i) => ({
+              id: `img-${uid()}`,
+              name: `Colour ${i + 1}`,
+              hex: rgbToHex(rgb),
+            })),
+          });
+      } else {
+        get().pushHistory();
+      }
+
+      const s1 = get();
+      const { columns, rows, cellAspect } = s1.design.loom;
+      const labs = paletteLabs(s1.design.palette.colors.map((c) => c.hex));
       const data = traceImageLayer(
         emptyGrid(columns, rows),
         layer,
@@ -606,10 +802,11 @@ export const useStore = create<StoreState>()(
         rows,
         cellAspect,
       );
-      s0.pushHistory();
       set((s) => {
+        const li = s.design.layers.findIndex((l) => l.id === id);
+        if (li < 0) return {};
         const layers = s.design.layers.slice();
-        layers[idx] = {
+        layers[li] = {
           id: uid(),
           kind: 'raster',
           name: layer.name,
@@ -627,6 +824,10 @@ export const useStore = create<StoreState>()(
 
     copySelection: () =>
       set((s) => {
+        if (s.selectedSelburoseId) {
+          const star = findStar(s, s.selectedSelburoseId);
+          return star ? { starClipboard: { ...star }, clipboard: null } : {};
+        }
         if (!s.selection) return {};
         const stamp = readStamp(activeRasterData(s) ?? [], s.selection);
         const mask = s.selectionMask;
@@ -637,11 +838,18 @@ export const useStore = create<StoreState>()(
             for (let x = 0; x < stamp.w; x++)
               if (!mask.has((r0 + y) * cols + (c0 + x))) stamp.data[y][x] = EMPTY;
         }
-        return { clipboard: stamp };
+        return { clipboard: stamp, starClipboard: null };
       }),
 
     cutSelection: () => {
       const s = get();
+      if (s.selectedSelburoseId) {
+        const star = findStar(s, s.selectedSelburoseId);
+        if (!star) return;
+        set({ starClipboard: { ...star }, clipboard: null });
+        s.removeSelburose(s.selectedSelburoseId); // self-manages history
+        return;
+      }
       if (!s.selection) return;
       s.pushHistory();
       s.copySelection();
@@ -668,14 +876,16 @@ export const useStore = create<StoreState>()(
         for (let y = 0; y < st.h; y++) {
           const tr = r + y;
           if (tr < 0 || tr >= rows) continue;
-          if (!touched.has(tr)) {
-            next[tr] = data[tr].slice();
-            touched.add(tr);
-          }
           for (let x = 0; x < st.w; x++) {
+            const v = st.data[y][x];
+            if (v < 0) continue; // transparent stamp cell — keep what's there
             const tc = c + x;
             if (tc < 0 || tc >= columns) continue;
-            next[tr][tc] = st.data[y][x];
+            if (!touched.has(tr)) {
+              next[tr] = data[tr].slice();
+              touched.add(tr);
+            }
+            next[tr][tc] = v;
           }
         }
         const sel: Rect = {
@@ -686,6 +896,76 @@ export const useStore = create<StoreState>()(
         };
         return { ...setActiveRaster(s, next), selection: sel, selectionMask: null };
       });
+    },
+
+    // Drop a copy of the copied selburose as a new layer, offset a little from
+    // the source so repeated pastes cascade; select it and open its panel.
+    pasteStar: () => {
+      const s0 = get();
+      const tmpl = s0.starClipboard;
+      if (!tmpl) return;
+      const { columns, rows } = s0.design.loom;
+      const cx = snapSelburoseCenter(
+        clamp(tmpl.cx + 1.5, 0, columns),
+        tmpl.center,
+      );
+      const cy = snapSelburoseCenter(clamp(tmpl.cy + 1.5, 0, rows), tmpl.center);
+      const star: SelburoseObject = { ...tmpl, id: uid(), cx, cy };
+      s0.pushHistory();
+      set((s) => {
+        const layer: SelburoseLayer = {
+          id: star.id,
+          kind: 'selburose',
+          name: nextLayerName(s.design.layers, 'selburose'),
+          visible: true,
+          star,
+        };
+        return {
+          design: { ...s.design, layers: s.design.layers.concat(layer) },
+          selectedSelburoseId: star.id,
+          editingSelburose: star.id,
+          rightPanel: 'selburose',
+          tool: 'select',
+          selection: null,
+          selectionMask: null,
+          selectedImageId: null,
+          editingImage: null,
+          selectedShapeId: null,
+          editingShape: null,
+          starClipboard: { ...star },
+          dirty: true,
+        };
+      });
+    },
+
+    nudgeSelected: (dx, dy, coalesce) => {
+      const s = get();
+      if (s.selectedSelburoseId) {
+        const star = findStar(s, s.selectedSelburoseId);
+        if (!star) return;
+        if (!coalesce) s.pushHistory();
+        set((st) =>
+          patchStar(st, s.selectedSelburoseId as string, {
+            cx: snapSelburoseCenter(star.cx + dx, star.center),
+            cy: snapSelburoseCenter(star.cy + dy, star.center),
+          }),
+        );
+        return;
+      }
+      if (s.selectedImageId) {
+        const l = s.design.layers.find(
+          (x) => x.kind === 'image' && x.id === s.selectedImageId,
+        );
+        if (!l || l.kind !== 'image') return;
+        if (!coalesce) s.pushHistory();
+        get().updateImageLayer(s.selectedImageId, { x: l.x + dx, y: l.y + dy });
+        return;
+      }
+      if (s.selectedShapeId) {
+        if (!findShape(s, s.selectedShapeId)) return;
+        if (!coalesce) s.pushHistory();
+        get().moveShape(s.selectedShapeId, dx, dy);
+      }
     },
 
     flip: (axis, scope) => {
@@ -746,6 +1026,8 @@ export const useStore = create<StoreState>()(
               editingSelburose: null,
               selectedImageId: null,
               editingImage: null,
+              selectedShapeId: null,
+              editingShape: null,
             }
           : {},
       ),
@@ -792,6 +1074,8 @@ export const useStore = create<StoreState>()(
             s.editingSelburose === id ? null : s.editingSelburose,
           selectedImageId: s.selectedImageId === id ? null : s.selectedImageId,
           editingImage: s.editingImage === id ? null : s.editingImage,
+          selectedShapeId: s.selectedShapeId === id ? null : s.selectedShapeId,
+          editingShape: s.editingShape === id ? null : s.editingShape,
           dirty: true,
         };
       });
@@ -853,6 +1137,8 @@ export const useStore = create<StoreState>()(
         rightPanel: p,
         editingSelburose: p === 'selburose' ? s.editingSelburose : null,
         editingImage: p === 'reference' ? s.editingImage : null,
+        editingShape: p === 'shape' ? s.editingShape : null,
+        lifeLayerId: p === 'life' ? s.lifeLayerId : null,
       })),
 
     // ---- selburose overlay objects -------------------------------------
@@ -904,6 +1190,8 @@ export const useStore = create<StoreState>()(
           selectionMask: null,
           selectedImageId: null,
           editingImage: null,
+          selectedShapeId: null,
+          editingShape: null,
           dirty: true,
         };
       });
@@ -915,6 +1203,8 @@ export const useStore = create<StoreState>()(
         rightPanel: 'selburose',
         selectedImageId: null,
         editingImage: null,
+        selectedShapeId: null,
+        editingShape: null,
       }),
     closeSelburoseEditor: () =>
       set((s) => ({
@@ -927,6 +1217,8 @@ export const useStore = create<StoreState>()(
         selectedSelburoseId: id,
         selectedImageId: null,
         editingImage: null,
+        selectedShapeId: null,
+        editingShape: null,
         selection: null,
         selectionMask: null,
       }),
@@ -995,6 +1287,253 @@ export const useStore = create<StoreState>()(
             s.selectedSelburoseId === id ? null : s.selectedSelburoseId,
           editingSelburose:
             s.editingSelburose === id ? null : s.editingSelburose,
+          dirty: true,
+        };
+      });
+    },
+
+    // ---- line / box shape overlay objects ---------------------------------
+    // Drawing a line or box on the canvas drops one of these as its own layer;
+    // it stays a live, re-editable vector until the user flattens it.
+    setLineThickness: (n) =>
+      set((s) => {
+        const t = Math.max(1, Math.min(40, Math.round(n)));
+        const sh = s.selectedShapeId
+          ? findShape(s, s.selectedShapeId)
+          : undefined;
+        if (sh) return { lineThickness: t, ...patchShapeObj(s, sh.id, { thickness: t }) };
+        return { lineThickness: t };
+      }),
+
+    addShape: (p) => {
+      const s0 = get();
+      const shape: ShapeObject = { ...p, id: uid() };
+      s0.pushHistory();
+      set((s) => {
+        const layer: ShapeLayer = {
+          id: shape.id,
+          kind: 'shape',
+          name: nextLayerName(s.design.layers, 'shape'),
+          visible: true,
+          shape,
+        };
+        return {
+          design: { ...s.design, layers: s.design.layers.concat(layer) },
+          selectedShapeId: shape.id,
+          editingShape: shape.id,
+          rightPanel: 'shape',
+          selection: null,
+          selectionMask: null,
+          selectedSelburoseId: null,
+          editingSelburose: null,
+          selectedImageId: null,
+          editingImage: null,
+          dirty: true,
+        };
+      });
+    },
+
+    openShapeEditor: (id) =>
+      set({
+        editingShape: id,
+        rightPanel: 'shape',
+        selectedSelburoseId: null,
+        editingSelburose: null,
+        selectedImageId: null,
+        editingImage: null,
+      }),
+
+    closeShapeEditor: () =>
+      set((s) => ({
+        editingShape: null,
+        rightPanel: s.rightPanel === 'shape' ? null : s.rightPanel,
+      })),
+
+    selectShape: (id) =>
+      set({
+        selectedShapeId: id,
+        selectedSelburoseId: null,
+        editingSelburose: null,
+        selectedImageId: null,
+        editingImage: null,
+        selection: null,
+        selectionMask: null,
+      }),
+
+    moveShape: (id, dx, dy) =>
+      set((s) => {
+        const sh = findShape(s, id);
+        if (!sh) return {};
+        const { columns, rows } = s.design.loom;
+        const xs =
+          sh.kind === 'poly' ? sh.points.map((p) => p[0]) : [sh.x0, sh.x1];
+        const ys =
+          sh.kind === 'poly' ? sh.points.map((p) => p[1]) : [sh.y0, sh.y1];
+        const ddx = Math.round(
+          clamp(dx, -Math.min(...xs), columns - 1 - Math.max(...xs)),
+        );
+        const ddy = Math.round(
+          clamp(dy, -Math.min(...ys), rows - 1 - Math.max(...ys)),
+        );
+        if (!ddx && !ddy) return {};
+        if (sh.kind === 'poly')
+          return patchShapeObj(s, id, {
+            points: sh.points.map((p): [number, number] => [
+              p[0] + ddx,
+              p[1] + ddy,
+            ]),
+          });
+        return patchShapeObj(s, id, {
+          x0: sh.x0 + ddx,
+          y0: sh.y0 + ddy,
+          x1: sh.x1 + ddx,
+          y1: sh.y1 + ddy,
+        });
+      }),
+
+    updateShape: (id, patch) => set((s) => patchShapeObj(s, id, patch)),
+
+    transformShape: (id, kind) => {
+      const s0 = get();
+      const sh = findShape(s0, id);
+      if (!sh) return;
+      const { columns, rows } = s0.design.loom;
+      const xs = sh.kind === 'poly' ? sh.points.map((p) => p[0]) : [sh.x0, sh.x1];
+      const ys = sh.kind === 'poly' ? sh.points.map((p) => p[1]) : [sh.y0, sh.y1];
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const doX = kind !== 'flipV';
+      const doY = kind !== 'flipH';
+      const fx = (x: number) =>
+        doX ? clamp(Math.round(2 * cx - x), 0, columns - 1) : x;
+      const fy = (y: number) =>
+        doY ? clamp(Math.round(2 * cy - y), 0, rows - 1) : y;
+      s0.pushHistory();
+      set((s) =>
+        patchShapeObj(
+          s,
+          id,
+          sh.kind === 'poly'
+            ? { points: sh.points.map((p): [number, number] => [fx(p[0]), fy(p[1])]) }
+            : {
+                x0: fx(sh.x0),
+                x1: fx(sh.x1),
+                y0: fy(sh.y0),
+                y1: fy(sh.y1),
+              },
+        ),
+      );
+    },
+
+    appendShapePoint: (id, pt) => {
+      const s0 = get();
+      const sh = findShape(s0, id);
+      if (!sh || sh.kind !== 'poly') return;
+      s0.pushHistory();
+      set((s) => patchShapeObj(s, id, { points: [...sh.points, pt] }));
+    },
+
+    moveShapePoint: (id, i, pt) =>
+      set((s) => {
+        const sh = findShape(s, id);
+        if (!sh || sh.kind !== 'poly' || i < 0 || i >= sh.points.length)
+          return {};
+        const points = sh.points.slice();
+        points[i] = pt;
+        return patchShapeObj(s, id, { points });
+      }),
+
+    insertShapePoint: (id, i, pt) => {
+      const s0 = get();
+      const sh = findShape(s0, id);
+      if (!sh || sh.kind !== 'poly') return;
+      s0.pushHistory();
+      set((s) => {
+        const points = sh.points.slice();
+        points.splice(clamp(i, 0, points.length), 0, pt);
+        return patchShapeObj(s, id, { points });
+      });
+    },
+
+    removeShapePoint: (id, i) => {
+      const s0 = get();
+      const sh = findShape(s0, id);
+      if (!sh || sh.kind !== 'poly' || sh.points.length <= 2) return;
+      s0.pushHistory();
+      set((s) => {
+        const points = sh.points.slice();
+        points.splice(i, 1);
+        return patchShapeObj(s, id, { points });
+      });
+    },
+
+    recolorShape: (id, colorIndex) => {
+      const s0 = get();
+      const sh = findShape(s0, id);
+      if (!sh) return;
+      const ci = clamp(colorIndex, 0, s0.design.palette.colors.length - 1);
+      if (ci === sh.colorIndex) return;
+      s0.pushHistory();
+      set((s) => patchShapeObj(s, id, { colorIndex: ci }));
+    },
+
+    removeShape: (id) => get().removeLayer(id),
+
+    // Bake the vector into the nearest raster layer (below, else above, else
+    // the active one) and drop the shape layer — "flatten into the drawing".
+    flattenShape: (id) => {
+      const s0 = get();
+      const idx = s0.design.layers.findIndex(
+        (l) => l.kind === 'shape' && l.id === id,
+      );
+      if (idx < 0) return;
+      const layer = s0.design.layers[idx] as ShapeLayer;
+      const { columns, rows } = s0.design.loom;
+      const cells = shapeLayerCells(layer.shape, columns, rows);
+      const value = clamp(
+        layer.shape.colorIndex,
+        0,
+        s0.design.palette.colors.length - 1,
+      );
+      let targetId: string | null = null;
+      for (let i = idx - 1; i >= 0 && !targetId; i--)
+        if (s0.design.layers[i].kind === 'raster') targetId = s0.design.layers[i].id;
+      for (let i = idx + 1; i < s0.design.layers.length && !targetId; i++)
+        if (s0.design.layers[i].kind === 'raster') targetId = s0.design.layers[i].id;
+      s0.pushHistory();
+      set((s) => {
+        const withoutShape = s.design.layers.filter((l) => l.id !== id);
+        const ti = withoutShape.findIndex((l) => l.id === targetId);
+        let layers: Layer[];
+        if (ti >= 0) {
+          const src = (withoutShape[ti] as RasterLayer).data;
+          const data = src.map((row) => row.slice());
+          for (const [c, r] of cells)
+            if (r >= 0 && r < rows && c >= 0 && c < columns) data[r][c] = value;
+          layers = withoutShape.slice();
+          layers[ti] = { ...(withoutShape[ti] as RasterLayer), data };
+        } else {
+          // nothing to merge into — leave a raster in the shape's place
+          const data = emptyGrid(columns, rows);
+          for (const [c, r] of cells)
+            if (r >= 0 && r < rows && c >= 0 && c < columns) data[r][c] = value;
+          layers = s.design.layers.map((l) =>
+            l.id === id
+              ? {
+                  id: uid(),
+                  kind: 'raster' as const,
+                  name: layer.name,
+                  visible: layer.visible,
+                  data,
+                }
+              : l,
+          );
+        }
+        return {
+          design: { ...s.design, layers },
+          selectedShapeId:
+            s.selectedShapeId === id ? null : s.selectedShapeId,
+          editingShape: s.editingShape === id ? null : s.editingShape,
           dirty: true,
         };
       });
@@ -1266,11 +1805,15 @@ export const useStore = create<StoreState>()(
           selection: null,
           selectionMask: null,
           clipboard: null,
+          starClipboard: null,
           selectedSelburoseId: null,
           editingSelburose: null,
           selectedImageId: null,
           editingImage: null,
+          selectedShapeId: null,
+          editingShape: null,
           rightPanel: null,
+          lifeLayerId: null,
           pasteMode: false,
           activeColor: 0,
           highlightRow: null,
@@ -1291,11 +1834,15 @@ export const useStore = create<StoreState>()(
           selection: null,
           selectionMask: null,
           clipboard: null,
+          starClipboard: null,
           selectedSelburoseId: null,
           editingSelburose: null,
           selectedImageId: null,
           editingImage: null,
+          selectedShapeId: null,
+          editingShape: null,
           rightPanel: null,
+          lifeLayerId: null,
           pasteMode: false,
           activeColor: 0,
           highlightRow: null,
@@ -1348,4 +1895,10 @@ export const useStore = create<StoreState>()(
 
     requestFit: () => set((s) => ({ fitNonce: s.fitNonce + 1 })),
   })),
+);
+
+// A decoded image bitmap changes what `compositeLayers` produces; nudge the
+// store so bead counts / palette usage / the canvas all recompute.
+subscribeImages(() =>
+  useStore.setState((s) => ({ imageEpoch: s.imageEpoch + 1 })),
 );

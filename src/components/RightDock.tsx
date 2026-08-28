@@ -3,24 +3,28 @@ import { Icon } from './icons';
 import ReferencePanel from './ReferencePanel';
 import LayerPanel from './LayerPanel';
 import SelburoseDialog from './SelburoseDialog';
+import ShapeDialog from './ShapeDialog';
 import LifeDialog from './LifeDialog';
 
-const TITLES = {
+const TITLES: Record<string, string> = {
   reference: 'Reference Image',
   selburose: 'Selburose',
+  shape: 'Shape',
   layers: 'Layers',
   life: 'Game of Life',
-} as const;
+};
 
 export default function RightDock() {
   const rightPanel = useStore((s) => s.rightPanel);
   const setRightPanel = useStore((s) => s.setRightPanel);
   const closeSelburoseEditor = useStore((s) => s.closeSelburoseEditor);
+  const closeShapeEditor = useStore((s) => s.closeShapeEditor);
 
   if (!rightPanel) return null;
 
   const close = () => {
     if (rightPanel === 'selburose') closeSelburoseEditor();
+    else if (rightPanel === 'shape') closeShapeEditor();
     else setRightPanel(null);
   };
 
@@ -40,6 +44,7 @@ export default function RightDock() {
       <div className="right-dock-body">
         {rightPanel === 'reference' && <ReferencePanel onClose={close} />}
         {rightPanel === 'selburose' && <SelburoseDialog />}
+        {rightPanel === 'shape' && <ShapeDialog />}
         {rightPanel === 'layers' && <LayerPanel onClose={close} />}
         {rightPanel === 'life' && <LifeDialog onClose={close} />}
       </div>

@@ -18,7 +18,8 @@ export default function PalettePanel() {
   const palette = s.design.palette;
   const usage = useMemo(
     () => colorUsage(compositeLayers(s.design)),
-    [s.design],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [s.design, s.imageEpoch],
   );
   const activeColor = palette.colors[s.activeColor];
 
@@ -73,6 +74,7 @@ export default function PalettePanel() {
                   s.setActiveColor(i);
                   if (s.selectedSelburoseId)
                     s.recolorSelburose(s.selectedSelburoseId, i);
+                  if (s.selectedShapeId) s.recolorShape(s.selectedShapeId, i);
                 }}
                 title={`${c.name} — ${c.hex}${c.code ? ` · ${c.code}` : ''}`}
                 aria-label={`Use ${c.name}`}

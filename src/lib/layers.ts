@@ -15,9 +15,12 @@ import {
   type RasterLayer,
   type SelburoseLayer,
   type SelburoseObject,
+  type ShapeLayer,
+  type ShapeObject,
 } from '../types';
 import { emptyGrid } from './grid';
-import { selburoseCells } from './shapes';
+import { selburoseCells, shapeCells } from './shapes';
+import { imageLayerGrid } from './imageTrace';
 import { clamp, uid } from '../util';
 
 export function emptyRasterLayer(
@@ -26,6 +29,29 @@ export function emptyRasterLayer(
   rows: number,
 ): RasterLayer {
   return { id: uid(), kind: 'raster', name, visible: true, data: emptyGrid(cols, rows) };
+}
+
+/** Cells a shape (line / box) layer paints, clipped to the grid. */
+export function shapeLayerCells(
+  shape: ShapeObject,
+  cols: number,
+  rows: number,
+): Array<[number, number]> {
+  return shapeCells(
+    {
+      kind: shape.kind,
+      x0: shape.x0,
+      y0: shape.y0,
+      x1: shape.x1,
+      y1: shape.y1,
+      points: shape.points,
+      closed: shape.closed,
+      thickness: shape.thickness,
+      fill: shape.fill,
+    },
+    cols,
+    rows,
+  );
 }
 
 /** Cells a Selburose layer paints, clipped to the grid. */
@@ -56,7 +82,21 @@ export function compositeLayers(design: BeadDesign): number[][] {
   const out = emptyGrid(cols, rows);
   for (const layer of design.layers) {
     if (!layer.visible) continue;
-    if (layer.kind === 'image') continue; // no beads until flattened
+    if (layer.kind === 'image') {
+      // A placed image shows its palette-matched trace live; it only becomes
+      // real raster pixels when the user flattens it.
+      const g = imageLayerGrid(design, layer);
+      if (!g) continue;
+      for (let r = 0; r < rows; r++) {
+        const src = g[r];
+        if (!src) continue;
+        for (let c = 0; c < cols; c++) {
+          const v = src[c];
+          if (v >= 0 && v < nColors) out[r][c] = v;
+        }
+      }
+      continue;
+    }
     if (layer.kind === 'raster') {
       for (let r = 0; r < rows; r++) {
         const src = layer.data[r];
@@ -65,6 +105,11 @@ export function compositeLayers(design: BeadDesign): number[][] {
           const v = src[c];
           if (v >= 0 && v < nColors) out[r][c] = v;
         }
+      }
+    } else if (layer.kind === 'shape') {
+      const v = clamp(layer.shape.colorIndex, 0, Math.max(0, nColors - 1));
+      for (const [c, r] of shapeLayerCells(layer.shape, cols, rows)) {
+        if (r >= 0 && r < rows && c >= 0 && c < cols) out[r][c] = v;
       }
     } else {
       const v = clamp(layer.star.colorIndex, 0, Math.max(0, nColors - 1));
@@ -92,6 +137,11 @@ export function remapLayerColors(
         ...layer,
         star: { ...layer.star, colorIndex: map(layer.star.colorIndex) },
       };
+    if (layer.kind === 'shape')
+      return {
+        ...layer,
+        shape: { ...layer.shape, colorIndex: map(layer.shape.colorIndex) },
+      };
     return layer; // image layers carry no palette indices
   });
 }
@@ -100,8 +150,14 @@ const NAME_RE = {
   raster: /^Layer (\d+)$/,
   selburose: /^Selburose (\d+)$/,
   image: /^Image (\d+)$/,
+  shape: /^Shape (\d+)$/,
 } as const;
-const NAME_LABEL = { raster: 'Layer', selburose: 'Selburose', image: 'Image' } as const;
+const NAME_LABEL = {
+  raster: 'Layer',
+  selburose: 'Selburose',
+  image: 'Image',
+  shape: 'Shape',
+} as const;
 
 export function nextLayerName(layers: Layer[], kind: Layer['kind']): string {
   const re = NAME_RE[kind];

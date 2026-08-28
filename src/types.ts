@@ -84,15 +84,48 @@ export interface ImageLayer {
   h: number; // natural pixel height
   x: number; // centre, in grid column-units
   y: number; // centre, in grid column-units (row units scaled by cellAspect)
-  scale: number; // grid column-units per image pixel
+  scaleX: number; // grid column-units per image pixel, horizontal
+  scaleY: number; // grid column-units per image pixel, vertical
   rotationDeg: number;
   skewXDeg: number;
   skewYDeg: number;
   opacity: number; // 0..1
+  contrast: number; // -1..1, applied before sampling/tracing
+  brightness: number; // -1..1
+  warmth: number; // -1..1 (red ↔ blue balance)
+  paletteMode: 'proposed' | 'current'; // trace against image-derived colours, or the current palette
+  paletteColors: number; // N colours to lift from the image (proposed mode)
   coveredOnly: boolean; // flatten only the cells the image actually covers
 }
 
-export type Layer = RasterLayer | SelburoseLayer | ImageLayer;
+/**
+ * A live, re-editable straight line or rectangle placed on the loom as its own
+ * layer. Like a Selburose it composites for display but never touches a bead
+ * until the user flattens it into a raster layer.
+ */
+export interface ShapeObject {
+  id: string;
+  kind: 'line' | 'box' | 'poly';
+  x0: number; // line endpoint / box corner cell coords (integers); unused for poly
+  y0: number;
+  x1: number;
+  y1: number;
+  points: Array<[number, number]>; // poly vertices (cell coords); empty for line/box
+  closed: boolean; // poly: connect last vertex back to first (and allow fill)
+  thickness: number; // bead width of a line / poly stroke / box outline (>= 1)
+  fill: boolean; // box, or closed poly: solid vs outline
+  colorIndex: number; // index into palette.colors
+}
+
+export interface ShapeLayer {
+  id: string; // === shape.id
+  kind: 'shape';
+  name: string;
+  visible: boolean;
+  shape: ShapeObject;
+}
+
+export type Layer = RasterLayer | SelburoseLayer | ImageLayer | ShapeLayer;
 
 /**
  * A parametric eight-point star placed on the loom as a live, non-destructive
@@ -136,13 +169,19 @@ export type ToolId =
   | 'line'
   | 'rect'
   | 'rectFill'
+  | 'poly'
   | 'select'
   | 'pan'
   | 'wand'
   | 'reference';
 
 /** The panels that dock to the right edge of the workspace, one at a time. */
-export type RightPanelId = 'reference' | 'selburose' | 'layers' | 'life';
+export type RightPanelId =
+  | 'reference'
+  | 'selburose'
+  | 'shape'
+  | 'layers'
+  | 'life';
 
 /** Inclusive, normalised cell rectangle. */
 export interface Rect {

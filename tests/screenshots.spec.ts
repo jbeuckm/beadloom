@@ -52,6 +52,11 @@ test('guided walkthrough with screenshots', async ({ page }) => {
   await page.locator('.swatch').nth(8).click();
   await pickTool(page, 'Box+');
   await dragCells(page, [5, 6], [12, 16]);
+  // the box lands on its own vector layer; bake it into the raster for the marquee demo
+  await page
+    .locator('.right-dock')
+    .getByRole('button', { name: 'Flatten to beads' })
+    .click();
   await pickTool(page, 'Select');
   await dragCells(page, [5, 6], [12, 16]);
   await expect.poll(async () => (await snapshot(page)).selection !== null).toBe(true);
@@ -141,6 +146,7 @@ test('guided walkthrough with screenshots', async ({ page }) => {
   // 17 — Game of Life -----------------------------------------
   await pickTool(page, 'Life');
   const life = page.locator('.right-dock', { hasText: 'Game of Life' });
+  await life.getByRole('combobox').first().selectOption('conway');
   await life.getByRole('button', { name: 'Seed grid' }).click();
   await life.getByRole('button', { name: 'Step' }).click();
   await shot(page, '17-game-of-life');
@@ -159,6 +165,7 @@ test('guided walkthrough with screenshots', async ({ page }) => {
   await shot(page, '18-image-layer');
 
   // 19 — palette lifted off the image, then flattened to beads ---
+  await page.locator('.ref-panel').getByLabel('Colours from this image').check();
   await page.locator('.ref-panel .ref-num input').fill('8');
   await page.locator('.ref-panel').getByRole('button', { name: 'Replace palette' }).click();
   await page.locator('.ref-panel').getByRole('button', { name: 'Flatten to beads' }).click();

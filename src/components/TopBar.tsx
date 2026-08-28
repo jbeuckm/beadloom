@@ -140,7 +140,17 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
         {(close) => (
           <>
             <div className="menu-label">Design</div>
-            <MenuItem onClick={() => onDialog('new')} close={close}>
+            <MenuItem
+              onClick={() => {
+                if (
+                  s.dirty &&
+                  !confirm('Discard unsaved changes and start a new design?')
+                )
+                  return;
+                onDialog('new');
+              }}
+              close={close}
+            >
               + New…
             </MenuItem>
             <MenuItem onClick={() => onDialog('open')} close={close}>

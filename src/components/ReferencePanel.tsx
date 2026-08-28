@@ -1,13 +1,15 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { Icon } from './icons';
 import type { ImageLayer } from '../types';
 import { uid } from '../util';
-import { medianCut, rgbToHex } from '../lib/quantize';
+import { paletteFromImage, rgbToHex } from '../lib/quantize';
 import { ensureImage, imageSamples } from '../lib/referenceImage';
+import { adjustRgb } from '../lib/trace';
 
 export default function ReferencePanel({ onClose: _onClose }: { onClose: () => void }) {
   const { columns, rows, cellAspect } = useStore((s) => s.design.loom);
+  const palette = useStore((s) => s.design.palette);
   const layer = useStore((s) => {
     if (!s.editingImage) return null;
     const l = s.design.layers.find(
@@ -23,7 +25,6 @@ export default function ReferencePanel({ onClose: _onClose }: { onClose: () => v
   const applyPalette = useStore((s) => s.applyPalette);
   const pushHistory = useStore((s) => s.pushHistory);
 
-  const [nColors, setNColors] = useState(10);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const fitScale = (w: number, h: number) =>
@@ -42,11 +43,17 @@ export default function ReferencePanel({ onClose: _onClose }: { onClose: () => v
         h,
         x: columns / 2,
         y: (rows * cellAspect) / 2,
-        scale: fitScale(w, h),
+        scaleX: fitScale(w, h),
+        scaleY: fitScale(w, h),
         rotationDeg: 0,
         skewXDeg: 0,
         skewYDeg: 0,
         opacity: 0.55,
+        contrast: 0,
+        brightness: 0,
+        warmth: 0,
+        paletteMode: 'current',
+        paletteColors: 10,
         coveredOnly: true,
       });
     };
@@ -64,16 +71,31 @@ export default function ReferencePanel({ onClose: _onClose }: { onClose: () => v
     updateImageLayer(layer.id, patch);
   };
 
-  const extractPalette = () => {
-    if (!layer) return;
-    const samples = imageSamples(layer.src);
-    if (!samples.length) return;
-    const colors = medianCut(samples, nColors).map((rgb, i) => ({
-      id: `img-${i + 1}`,
+  /** Hue-aware palette from the (adjusted) image pixels. */
+  const proposeColors = () => {
+    if (!layer) return [];
+    const samples = imageSamples(layer.src).map((rgb) => adjustRgb(rgb, layer));
+    if (!samples.length) return [];
+    return paletteFromImage(samples, layer.paletteColors).map((rgb, i) => ({
+      id: `img-${uid()}`,
       name: `Colour ${i + 1}`,
       hex: rgbToHex(rgb),
     }));
-    applyPalette({ id: uid(), name: 'From image', colors });
+  };
+
+  const replacePalette = () => {
+    const colors = proposeColors();
+    if (colors.length) applyPalette({ id: uid(), name: 'From image', colors });
+  };
+
+  const addColors = () => {
+    const colors = proposeColors();
+    if (colors.length)
+      applyPalette({
+        id: palette.id,
+        name: palette.name,
+        colors: palette.colors.concat(colors),
+      });
   };
 
   const picker = (
@@ -94,11 +116,6 @@ export default function ReferencePanel({ onClose: _onClose }: { onClose: () => v
     return (
       <div className="ref-panel dock-panel">
         {picker}
-        <p className="hint">
-          Place a photo or drawing as its own layer, transform it on the canvas
-          with the <b>Image</b> tool, then <b>Flatten to beads</b> when it's lined
-          up. No bead changes until you flatten.
-        </p>
         <button className="btn primary" onClick={() => fileRef.current?.click()}>
           <Icon name="image" size={16} /> Choose image…
         </button>
@@ -109,30 +126,43 @@ export default function ReferencePanel({ onClose: _onClose }: { onClose: () => v
   return (
     <div className="ref-panel dock-panel">
       {picker}
-      <img className="ref-thumb" src={layer.src} alt="" />
 
       <p className="hint">
-        <b>Image</b> tool: drag the picture to move it; use the corner, edge and
-        rotation handles to scale, skew and rotate.
+        This image keeps its traced colours on its own layer while you work
+        elsewhere. Use <b>Flatten to beads</b> when you want it painted into a
+        normal drawing layer.
       </p>
 
-      <h4>Palette from image</h4>
-      <div className="ref-btn-row">
-        <label className="ref-num">
-          Colours
-          <input
-            type="number"
-            min={2}
-            max={24}
-            value={nColors}
-            onChange={(e) =>
-              setNColors(Math.max(2, Math.min(24, Number(e.target.value) || 2)))
-            }
-          />
-        </label>
-        <button className="btn grow" onClick={extractPalette}>
-          Replace palette
-        </button>
+      <h4>Adjust</h4>
+      <div className="field">
+        <label>Contrast — {Math.round(layer.contrast * 100)}</label>
+        <input
+          type="range"
+          min={-100}
+          max={100}
+          value={Math.round(layer.contrast * 100)}
+          onChange={(e) => edit({ contrast: Number(e.target.value) / 100 })}
+        />
+      </div>
+      <div className="field">
+        <label>Brightness — {Math.round(layer.brightness * 100)}</label>
+        <input
+          type="range"
+          min={-100}
+          max={100}
+          value={Math.round(layer.brightness * 100)}
+          onChange={(e) => edit({ brightness: Number(e.target.value) / 100 })}
+        />
+      </div>
+      <div className="field">
+        <label>Warmth — {Math.round(layer.warmth * 100)}</label>
+        <input
+          type="range"
+          min={-100}
+          max={100}
+          value={Math.round(layer.warmth * 100)}
+          onChange={(e) => edit({ warmth: Number(e.target.value) / 100 })}
+        />
       </div>
 
       <label className="check">
@@ -155,12 +185,63 @@ export default function ReferencePanel({ onClose: _onClose }: { onClose: () => v
         />
       </div>
 
+      <h4>Palette</h4>
+      <label className="check">
+        <input
+          type="radio"
+          name="img-palette-mode"
+          checked={layer.paletteMode === 'proposed'}
+          onChange={() => edit({ paletteMode: 'proposed' })}
+        />
+        Colours from this image
+      </label>
+      <label className="check">
+        <input
+          type="radio"
+          name="img-palette-mode"
+          checked={layer.paletteMode === 'current'}
+          onChange={() => edit({ paletteMode: 'current' })}
+        />
+        Use the current palette
+      </label>
+
+      {layer.paletteMode === 'proposed' && (
+        <>
+          <label className="ref-num">
+            Colours
+            <input
+              type="number"
+              min={2}
+              max={24}
+              value={layer.paletteColors}
+              onChange={(e) =>
+                edit({
+                  paletteColors: Math.max(
+                    2,
+                    Math.min(24, Number(e.target.value) || 2),
+                  ),
+                })
+              }
+            />
+          </label>
+          <div className="ref-btn-row">
+            <button className="btn grow" onClick={replacePalette}>
+              Replace palette
+            </button>
+            <button className="btn grow" onClick={addColors}>
+              Add colours
+            </button>
+          </div>
+        </>
+      )}
+
       <div className="ref-btn-row">
         <button
           className="btn mini"
           onClick={() =>
             edit({
-              scale: fitScale(layer.w, layer.h),
+              scaleX: fitScale(layer.w, layer.h),
+              scaleY: fitScale(layer.w, layer.h),
               x: columns / 2,
               y: (rows * cellAspect) / 2,
               rotationDeg: 0,

@@ -31,18 +31,13 @@ const PRESETS: Array<[number, number]> = [
 
 function NewDialog({ onClose }: { onClose: () => void }) {
   const newDesign = useStore((s) => s.newDesign);
-  const dirty = useStore((s) => s.dirty);
   const [cols, setCols] = useState(100);
   const [rows, setRows] = useState(25);
   const [name, setName] = useState('Untitled Pattern');
   const [keepPalette, setKeepPalette] = useState(true);
 
+  // The unsaved-changes prompt already happened before this dialog opened.
   const create = () => {
-    if (
-      dirty &&
-      !confirm('Discard unsaved changes and start a new design?')
-    )
-      return;
     newDesign({ columns: cols, rows, name, keepPalette });
     onClose();
   };

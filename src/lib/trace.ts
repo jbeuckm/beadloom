@@ -5,6 +5,23 @@ import type { ImageLayer } from '../types';
 import { nearestIndex, type Lab } from './color';
 import { sampleImage } from './referenceImage';
 
+const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
+
+/** Contrast / brightness / warmth adjustment applied before palette matching. */
+export function adjustRgb(
+  [r, g, b]: [number, number, number],
+  adj: { contrast: number; brightness: number; warmth: number },
+): [number, number, number] {
+  const cf = 1 + (adj.contrast || 0); // slope about mid-grey
+  const add = (adj.brightness || 0) * 255;
+  const w = (adj.warmth || 0) * 60;
+  return [
+    clamp255((r - 128) * cf + 128 + add + w),
+    clamp255((g - 128) * cf + 128 + add),
+    clamp255((b - 128) * cf + 128 + add - w),
+  ];
+}
+
 /** grid column-units (both axes) → image pixel coords, inverting the placement. */
 export function gridToImage(layer: ImageLayer) {
   const deg = Math.PI / 180;
@@ -14,7 +31,8 @@ export function gridToImage(layer: ImageLayer) {
   const b = Math.tan(layer.skewXDeg * deg);
   const c = Math.tan(layer.skewYDeg * deg);
   const det = 1 - b * c || 1;
-  const s = layer.scale || 1e-6;
+  const sx = layer.scaleX || 1e-6;
+  const sy = layer.scaleY || 1e-6;
   return (gx: number, gy: number) => {
     const dx = gx - layer.x;
     const dy = gy - layer.y;
@@ -22,7 +40,7 @@ export function gridToImage(layer: ImageLayer) {
     const ry = dx * sin + dy * cos;
     const ux = (rx - b * ry) / det;
     const uy = (-c * rx + ry) / det;
-    return { ix: ux / s + layer.w / 2, iy: uy / s + layer.h / 2 };
+    return { ix: ux / sx + layer.w / 2, iy: uy / sy + layer.h / 2 };
   };
 }
 
@@ -46,7 +64,7 @@ export function traceImageLayer(
       const { ix, iy } = inv(c + 0.5, (r + 0.5) * aspect);
       const px = sampleImage(layer.src, ix, iy);
       if (!px || (layer.coveredOnly && px[3] < 8)) continue;
-      out[r][c] = nearestIndex([px[0], px[1], px[2]], labs);
+      out[r][c] = nearestIndex(adjustRgb([px[0], px[1], px[2]], layer), labs);
     }
   }
   return out;

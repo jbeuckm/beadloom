@@ -72,11 +72,26 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
     expect(s.paletteSize).toBe(10); // "keep current palette" is on by default
   }
 
-  // === 4. Shapes: filled rect, outline rect, line ======================
+  // === 4. Shapes: filled rect, outline rect, line =====================
+  // Each shape lands on its own vector layer; flatten it into the raster so
+  // the later marquee / fill / transform steps operate on real beads.
+  const flattenShape = () =>
+    page
+      .locator('.right-dock')
+      .getByRole('button', { name: 'Flatten to beads' })
+      .click();
+
   await pickTool(page, 'Box+'); // filled rectangle
   await page.locator('.swatch').nth(1).click();
   await dragCells(page, [24, 20], [30, 26]); // 7 x 7 solid block
-  expect((await snapshot(page)).beads).toBe(49);
+  {
+    const s = await snapshot(page);
+    expect(s.shapes.length).toBe(1);
+    expect(s.shapes[0]).toMatchObject({ kind: 'box', fill: true, colorIndex: 1 });
+    expect(s.beads).toBe(49); // composites live, before flattening
+  }
+  await flattenShape();
+  expect((await snapshot(page)).shapes.length).toBe(0);
   expect(await cellValue(page, 24, 20)).toBe(1);
   expect(await cellValue(page, 27, 23)).toBe(1);
   expect(await cellValue(page, 30, 26)).toBe(1);
@@ -84,6 +99,7 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
   await pickTool(page, 'Box'); // outline rectangle
   await page.locator('.swatch').nth(2).click();
   await dragCells(page, [10, 5], [18, 12]);
+  await flattenShape();
   expect(await cellValue(page, 10, 5)).toBe(2); // corner drawn
   expect(await cellValue(page, 18, 12)).toBe(2);
   expect(await cellValue(page, 14, 8)).toBe(-1); // interior stays empty
@@ -91,6 +107,7 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
   await pickTool(page, 'Line');
   await page.locator('.swatch').nth(4).click();
   await dragCells(page, [5, 34], [15, 34]); // horizontal run
+  await flattenShape();
   expect(await cellValue(page, 5, 34)).toBe(4);
   expect(await cellValue(page, 10, 34)).toBe(4);
   expect(await cellValue(page, 15, 34)).toBe(4);

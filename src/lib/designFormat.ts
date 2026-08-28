@@ -17,6 +17,7 @@ import {
   type PaletteFile,
   type RasterLayer,
   type SelburoseObject,
+  type ShapeObject,
 } from '../types';
 import { emptyGrid } from './grid';
 import { compositeLayers } from './layers';
@@ -80,6 +81,27 @@ export function validateDesign(raw: any): BeadDesign {
     return g;
   };
 
+  const coerceShape = (o: any, i: number): ShapeObject => ({
+    id: String(o?.id ?? `shp${i + 1}`),
+    kind: o?.kind === 'line' ? 'line' : o?.kind === 'poly' ? 'poly' : 'box',
+    x0: clampInt(o?.x0, 0, cols - 1, 0),
+    y0: clampInt(o?.y0, 0, rows - 1, 0),
+    x1: clampInt(o?.x1, 0, cols - 1, 0),
+    y1: clampInt(o?.y1, 0, rows - 1, 0),
+    points: Array.isArray(o?.points)
+      ? o.points
+          .filter((p: any) => Array.isArray(p) && p.length === 2)
+          .map((p: any): [number, number] => [
+            clampInt(p[0], 0, cols - 1, 0),
+            clampInt(p[1], 0, rows - 1, 0),
+          ])
+      : [],
+    closed: !!o?.closed,
+    thickness: Math.max(1, Math.round(num(o?.thickness, 1))),
+    fill: !!o?.fill,
+    colorIndex: clampInt(o?.colorIndex, 0, colors.length - 1, 0),
+  });
+
   const coerceStar = (o: any, i: number): SelburoseObject => ({
     id: String(o?.id ?? `sel${i + 1}`),
     cx: num(o?.cx, cols / 2),
@@ -107,6 +129,8 @@ export function validateDesign(raw: any): BeadDesign {
         };
         if (l.kind === 'selburose')
           return { ...common, kind: 'selburose', star: coerceStar(l.star, i) };
+        if (l.kind === 'shape')
+          return { ...common, kind: 'shape', shape: coerceShape(l.shape, i) };
         return { ...common, kind: 'raster', data: coerceGrid(l.data) };
       });
   } else {

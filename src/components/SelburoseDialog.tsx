@@ -30,6 +30,20 @@ export default function SelburoseDialog() {
     if (!star) close();
   }, [star, close]);
 
+  // Holding Shift snaps the rotation slider to 15° increments.
+  const shiftHeld = useRef(false);
+  useEffect(() => {
+    const track = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') shiftHeld.current = e.type === 'keydown';
+    };
+    window.addEventListener('keydown', track);
+    window.addEventListener('keyup', track);
+    return () => {
+      window.removeEventListener('keydown', track);
+      window.removeEventListener('keyup', track);
+    };
+  }, []);
+
   // One undo checkpoint the first time this star is edited in the panel.
   const dirtied = useRef<string | null>(null);
   const edit = (patch: Partial<SelburoseObject>) => {
@@ -89,7 +103,11 @@ export default function SelburoseDialog() {
           min={-180}
           max={180}
           value={star.rotationDeg}
-          onChange={(e) => edit({ rotationDeg: Number(e.target.value) })}
+          onChange={(e) => {
+            let v = Number(e.target.value);
+            if (shiftHeld.current) v = Math.round(v / 15) * 15;
+            edit({ rotationDeg: v });
+          }}
         />
       </div>
       <div className="field">

@@ -12,6 +12,7 @@ export type IconName =
   | 'fill'
   | 'pipette'
   | 'line'
+  | 'poly'
   | 'square'
   | 'square-fill'
   | 'marquee'
@@ -78,6 +79,16 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M6 18 18 6" />
       <circle cx="6" cy="18" r="2" {...DOT} />
       <circle cx="18" cy="6" r="2" {...DOT} />
+    </>
+  ),
+  poly: (
+    <>
+      <path d="M5 8 12 3l7 5-2.5 11h-9L5 8Z" />
+      <circle cx="5" cy="8" r="1.6" {...DOT} />
+      <circle cx="12" cy="3" r="1.6" {...DOT} />
+      <circle cx="19" cy="8" r="1.6" {...DOT} />
+      <circle cx="16.5" cy="19" r="1.6" {...DOT} />
+      <circle cx="7.5" cy="19" r="1.6" {...DOT} />
     </>
   ),
   square: <rect x="4" y="4" width="16" height="16" rx="1" />,

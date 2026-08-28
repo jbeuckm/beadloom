@@ -37,6 +37,7 @@ export async function snapshot(page: Page) {
       paletteName: s.design.palette.name,
       activeColor: s.activeColor,
       background: s.design.background,
+      dirty: s.dirty,
       tool: s.tool,
       pasteMode: s.pasteMode,
       selection: s.selection,
@@ -52,6 +53,10 @@ export async function snapshot(page: Page) {
       })),
       activeLayer: s.activeLayer,
       selburoses: selburoseLayers.map((l: any) => ({ ...l.star })),
+      shapes: s.design.layers
+        .filter((l: any) => l.kind === 'shape')
+        .map((l: any) => ({ ...l.shape })),
+      lineThickness: s.lineThickness,
       imageLayers: s.design.layers
         .filter((l: any) => l.kind === 'image')
         .map((l: any) => ({
@@ -62,17 +67,25 @@ export async function snapshot(page: Page) {
           h: l.h,
           x: l.x,
           y: l.y,
-          scale: l.scale,
+          scaleX: l.scaleX,
+          scaleY: l.scaleY,
           rotationDeg: l.rotationDeg,
           skewXDeg: l.skewXDeg,
           skewYDeg: l.skewYDeg,
           opacity: l.opacity,
+          contrast: l.contrast,
+          brightness: l.brightness,
+          warmth: l.warmth,
+          paletteMode: l.paletteMode,
+          paletteColors: l.paletteColors,
           coveredOnly: l.coveredOnly,
         })),
       selectedSelburoseId: s.selectedSelburoseId,
       editingSelburose: s.editingSelburose,
       selectedImageId: s.selectedImageId,
       editingImage: s.editingImage,
+      selectedShapeId: s.selectedShapeId,
+      editingShape: s.editingShape,
       rightPanel: s.rightPanel,
       undo: s.undoStack.length,
       redo: s.redoStack.length,
@@ -133,8 +146,8 @@ export async function refHandles(page: Page) {
   const bx = Math.tan(r.skewXDeg * deg);
   const by = Math.tan(r.skewYDeg * deg);
   const f = (lx: number, ly: number) => {
-    const px = (lx - r.w / 2) * r.scale;
-    const py = (ly - r.h / 2) * r.scale;
+    const px = (lx - r.w / 2) * r.scaleX;
+    const py = (ly - r.h / 2) * r.scaleY;
     const sx = px + bx * py;
     const sy = by * px + py;
     const rx = sx * cos - sy * sin;

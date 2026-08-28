@@ -197,3 +197,146 @@ export function selburoseCells(
   }
   return mode === 'fill' ? filled : erodeOutline(filled, cols);
 }
+
+// ---------------------------------------------------------------------------
+// Line / box shape layers — a straight run of beads or a rectangle, kept live
+// and re-editable until the user flattens it.
+
+export interface ShapeGeom {
+  kind: 'line' | 'box' | 'poly';
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  points: Array<[number, number]>;
+  closed: boolean;
+  thickness: number;
+  fill: boolean;
+}
+
+/** Integer cell addresses along a Bresenham line from (x0,y0) to (x1,y1). */
+function linePixels(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let x = Math.round(x0);
+  let y = Math.round(y0);
+  const ex = Math.round(x1);
+  const ey = Math.round(y1);
+  const dx = Math.abs(ex - x);
+  const dy = -Math.abs(ey - y);
+  const sx = x < ex ? 1 : -1;
+  const sy = y < ey ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    out.push([x, y]);
+    if (x === ex && y === ey) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+  return out;
+}
+
+/** Stamp a round brush of the given bead width around each spine cell. */
+function thicken(
+  spine: Array<[number, number]>,
+  thickness: number,
+): Array<[number, number]> {
+  const t = Math.max(1, Math.round(thickness));
+  if (t <= 1) return spine;
+  const rad = (t - 1) / 2;
+  const R = Math.ceil(rad);
+  const seen = new Set<string>();
+  const out: Array<[number, number]> = [];
+  for (const [c, r] of spine) {
+    for (let dr = -R; dr <= R; dr++) {
+      for (let dc = -R; dc <= R; dc++) {
+        if (Math.hypot(dc, dr) > rad + 0.5) continue;
+        const key = `${c + dc},${r + dr}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push([c + dc, r + dr]);
+      }
+    }
+  }
+  return out;
+}
+
+/** Cells a line / box / poly shape paints, clipped to the grid. */
+export function shapeCells(
+  g: ShapeGeom,
+  cols: number,
+  rows: number,
+): Array<[number, number]> {
+  let raw: Array<[number, number]>;
+  if (g.kind === 'poly') {
+    const pts = g.points;
+    const spine: Array<[number, number]> = [];
+    const n = pts.length;
+    const segs = g.closed ? n : n - 1;
+    for (let i = 0; i < Math.max(0, segs); i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % n];
+      for (const p of linePixels(a[0], a[1], b[0], b[1])) spine.push(p);
+    }
+    if (n === 1) spine.push(pts[0]);
+    raw = thicken(spine, g.thickness);
+    if (g.closed && g.fill && n >= 3) {
+      const poly = pts.map(([x, y]): [number, number] => [x + 0.5, y + 0.5]);
+      for (const cell of rasterizePolygon(poly, cols, rows, 'fill')) raw.push(cell);
+    }
+  } else if (g.kind === 'line') {
+    raw = thicken(linePixels(g.x0, g.y0, g.x1, g.y1), g.thickness);
+  } else {
+    const c0 = Math.min(g.x0, g.x1);
+    const c1 = Math.max(g.x0, g.x1);
+    const r0 = Math.min(g.y0, g.y1);
+    const r1 = Math.max(g.y0, g.y1);
+    raw = [];
+    if (g.fill) {
+      for (let r = r0; r <= r1; r++)
+        for (let c = c0; c <= c1; c++) raw.push([c, r]);
+    } else {
+      const t = Math.max(1, Math.round(g.thickness));
+      for (let r = r0; r <= r1; r++)
+        for (let c = c0; c <= c1; c++)
+          if (c - c0 < t || c1 - c < t || r - r0 < t || r1 - r < t)
+            raw.push([c, r]);
+    }
+  }
+  const seen = new Set<number>();
+  const out: Array<[number, number]> = [];
+  for (const [c, r] of raw) {
+    if (c < 0 || r < 0 || c >= cols || r >= rows) continue;
+    const key = r * cols + c;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push([c, r]);
+  }
+  return out;
+}
+
+/** Inclusive bounding box (grid units) of a shape, including line thickness. */
+export function shapeGridBBox(g: ShapeGeom) {
+  const pad =
+    g.kind === 'box' ? 0 : Math.max(0, (g.thickness - 1) / 2);
+  const xs = g.kind === 'poly' ? g.points.map((p) => p[0]) : [g.x0, g.x1];
+  const ys = g.kind === 'poly' ? g.points.map((p) => p[1]) : [g.y0, g.y1];
+  if (!xs.length) return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+  return {
+    minX: Math.min(...xs) - pad,
+    minY: Math.min(...ys) - pad,
+    maxX: Math.max(...xs) + pad + 1,
+    maxY: Math.max(...ys) + pad + 1,
+  };
+}

@@ -8,20 +8,30 @@ import {
 } from 'react';
 import { useStore } from '../store/useStore';
 import { drawBase } from '../lib/render';
-import { linePoints, normRect } from '../lib/grid';
+import { emptyGrid, linePoints, normRect } from '../lib/grid';
 import { compositeLayers } from '../lib/layers';
+import { rgbToLab, type Lab } from '../lib/color';
+import { adjustRgb, traceImageLayer } from '../lib/trace';
+import { paletteFromImage, rgbToHex } from '../lib/quantize';
 import {
   pointInPolygon,
   selburoseInsetShift,
   selburoseParallelograms,
+  shapeGridBBox,
   snapSelburoseCenter,
 } from '../lib/shapes';
-import type { BeadDesign, ImageLayer, SelburoseObject } from '../types';
+import type {
+  BeadDesign,
+  ImageLayer,
+  SelburoseObject,
+  ShapeObject,
+} from '../types';
 import { EMPTY, PX_PER_COL, type Rect } from '../types';
 import { clamp } from '../util';
 import {
   ensureImage,
   getBitmap,
+  imageSamples,
   subscribeImages,
 } from '../lib/referenceImage';
 
@@ -41,8 +51,8 @@ function refForwardScreen(
   const bx = Math.tan(ref.skewXDeg * deg);
   const by = Math.tan(ref.skewYDeg * deg);
   return (lx: number, ly: number): [number, number] => {
-    const px = (lx - ref.w / 2) * ref.scale;
-    const py = (ly - ref.h / 2) * ref.scale;
+    const px = (lx - ref.w / 2) * ref.scaleX;
+    const py = (ly - ref.h / 2) * ref.scaleY;
     const sx = px + bx * py;
     const sy = by * px + py;
     const rx = sx * cos - sy * sin;
@@ -128,6 +138,7 @@ export default function LoomCanvas() {
   const cursor = useStore((s) => s.cursor);
   const editingImage = useStore((s) => s.editingImage);
   const selectedSelburoseId = useStore((s) => s.selectedSelburoseId);
+  const selectedShapeId = useStore((s) => s.selectedShapeId);
   const [refNonce, setRefNonce] = useState(0);
 
   // Redraw when any image-layer bitmap finishes decoding.
@@ -164,7 +175,10 @@ export default function LoomCanvas() {
     gy0: number;
     x0: number;
     y0: number;
-    scale0: number;
+    sx0: number; // scaleX at gesture start
+    sy0: number; // scaleY at gesture start
+    qx0: number; // grab point in the image's un-rotated frame
+    qy0: number;
     rot0: number;
     d0: number;
     ang0: number;
@@ -182,7 +196,25 @@ export default function LoomCanvas() {
     ox: number;
     oy: number;
   }>(null);
+  // line / box / poly shape interaction: move the whole shape, an end / corner,
+  // or one polygon vertex
+  const shapeGesture = useRef<null | {
+    id: string;
+    mode: 'move' | 'p0' | 'p1' | 'vertex';
+    vi: number; // vertex index for 'vertex'
+    gx0: number;
+    gy0: number;
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    pts0: Array<[number, number]>; // poly vertices at gesture start
+  }>(null);
   const lastTap = useRef<null | { id: string; t: number }>(null);
+  // memoised proposed palette for the edited image's preview
+  const proposedRef = useRef<null | { key: string; hex: string[]; labs: Lab[] }>(
+    null,
+  );
 
   // ---- coordinate helpers ----------------------------------------------
   const toCell = useCallback(
@@ -340,49 +372,104 @@ export default function LoomCanvas() {
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+    const composite = compositeLayers(design);
     const off = { scale, offX: view.panX, offY: view.panY };
-    drawBase(ctx, design, compositeLayers(design), off, size.w, size.h, {
+    drawBase(ctx, design, composite, off, size.w, size.h, {
       showGrid: settings.showGrid,
       showRowNumbers: settings.showRowNumbers,
       highlightRow,
     });
 
-    // Image layers draw over the composited beads (always on top), in layer
-    // order. Grid column-units map to screen as pan + unit*scale on both axes —
-    // the cell squish is baked into each image's transform, not the view.
+    const cellH = scale * asp;
+    const cols = design.loom.columns;
+    const rows = design.loom.rows;
+    const px = (c: number) => view.panX + c * scale;
+    const py = (r: number) => view.panY + r * cellH;
+
+    // An image layer's palette-matched trace is already in `composite` (it stays
+    // there while you edit other layers). The layer being edited additionally
+    // shows the bitmap + transform handles, and — in "proposed" mode — a preview
+    // of the N-colour palette it would lift off the image.
     void refNonce;
     const deg = Math.PI / 180;
-    for (const layer of design.layers) {
-      if (layer.kind !== 'image' || !layer.visible) continue;
-      ensureImage(layer.src);
-      const bmp = getBitmap(layer.src);
-      if (!bmp) continue;
-      const dw = layer.w * layer.scale;
-      const dh = layer.h * layer.scale;
-      ctx.save();
-      ctx.translate(view.panX, view.panY);
-      ctx.scale(scale, scale);
-      ctx.translate(layer.x, layer.y);
-      ctx.rotate(layer.rotationDeg * deg);
-      ctx.transform(
-        1,
-        Math.tan(layer.skewYDeg * deg),
-        Math.tan(layer.skewXDeg * deg),
-        1,
-        0,
-        0,
-      );
-      ctx.globalAlpha = clamp(layer.opacity, 0, 1);
-      ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh);
-      ctx.restore();
-    }
-
-    // transform box + handles for the image being edited (screen space)
     {
       const edited = design.layers.find(
         (l): l is ImageLayer => l.kind === 'image' && l.id === editingImage,
       );
+      if (edited) {
+        ensureImage(edited.src);
+        const bmp = getBitmap(edited.src);
+
+        let hex: string[] = [];
+        let labs: Lab[] = [];
+        if (edited.paletteMode === 'proposed') {
+          const key = [
+            edited.src,
+            edited.paletteColors,
+            edited.contrast,
+            edited.brightness,
+            edited.warmth,
+          ].join('|');
+          if (!proposedRef.current || proposedRef.current.key !== key) {
+            const smp = imageSamples(edited.src).map((c) => adjustRgb(c, edited));
+            const pal = smp.length
+              ? paletteFromImage(smp, edited.paletteColors)
+              : [];
+            proposedRef.current = {
+              key,
+              hex: pal.map(rgbToHex),
+              labs: pal.map((c) => rgbToLab(c[0], c[1], c[2])),
+            };
+          }
+          hex = proposedRef.current.hex;
+          labs = proposedRef.current.labs;
+        }
+
+        if (labs.length && bmp) {
+          const preview = traceImageLayer(
+            emptyGrid(cols, rows),
+            edited,
+            labs,
+            cols,
+            rows,
+            asp,
+          );
+          ctx.save();
+          for (let r = 0; r < rows; r++)
+            for (let c = 0; c < cols; c++) {
+              const v = preview[r][c];
+              if (v < 0) continue;
+              ctx.fillStyle = hex[v] ?? '#000';
+              ctx.fillRect(px(c), py(r), scale + 0.6, cellH + 0.6);
+            }
+          ctx.restore();
+        }
+
+        // the bitmap itself, semi-transparent, for reference while positioning
+        if (bmp) {
+          const dw = edited.w * edited.scaleX;
+          const dh = edited.h * edited.scaleY;
+          ctx.save();
+          ctx.translate(view.panX, view.panY);
+          ctx.scale(scale, scale);
+          ctx.translate(edited.x, edited.y);
+          ctx.rotate(edited.rotationDeg * deg);
+          ctx.transform(
+            1,
+            Math.tan(edited.skewYDeg * deg),
+            Math.tan(edited.skewXDeg * deg),
+            1,
+            0,
+            0,
+          );
+          ctx.globalAlpha = clamp(edited.opacity, 0, 1);
+          ctx.imageSmoothingEnabled = true;
+          ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh);
+          ctx.restore();
+        }
+      }
+
+      // transform box + handles for the image being edited (screen space)
       if (edited && tool === 'reference') {
         const { corners, edges, rot } = refHandles(
           edited,
@@ -428,12 +515,6 @@ export default function LoomCanvas() {
       }
     }
 
-    const cellH = scale * asp;
-    const cols = design.loom.columns;
-    const rows = design.loom.rows;
-    const px = (c: number) => view.panX + c * scale;
-    const py = (r: number) => view.panY + r * cellH;
-
     // Selburose layers are already in the composite; draw the selection box.
     if (selectedSelburoseId) {
       const sel = starById(design, selectedSelburoseId);
@@ -449,6 +530,65 @@ export default function LoomCanvas() {
           (b.maxX - b.minX) * scale,
           (b.maxY - b.minY) * cellH,
         );
+        ctx.restore();
+      }
+    }
+
+    // Shape (line / box / poly) layers: selection box + editable handles.
+    if (selectedShapeId) {
+      const sh = shapeById(design, selectedShapeId);
+      if (sh) {
+        const b = shapeGridBBox({
+          kind: sh.kind,
+          x0: sh.x0,
+          y0: sh.y0,
+          x1: sh.x1,
+          y1: sh.y1,
+          points: sh.points,
+          closed: sh.closed,
+          thickness: sh.thickness,
+          fill: sh.fill,
+        });
+        ctx.save();
+        ctx.strokeStyle = '#1268ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(
+          px(b.minX),
+          py(b.minY),
+          (b.maxX - b.minX) * scale,
+          (b.maxY - b.minY) * cellH,
+        );
+        ctx.setLineDash([]);
+        const handles: Array<[number, number]> =
+          sh.kind === 'poly'
+            ? sh.points
+            : [
+                [sh.x0, sh.y0],
+                [sh.x1, sh.y1],
+              ];
+        if (sh.kind === 'poly' && sh.points.length > 1) {
+          // trace the spine so vertices are easy to see while editing
+          ctx.beginPath();
+          ctx.moveTo(px(sh.points[0][0] + 0.5), py(sh.points[0][1] + 0.5));
+          for (let i = 1; i < sh.points.length; i++)
+            ctx.lineTo(px(sh.points[i][0] + 0.5), py(sh.points[i][1] + 0.5));
+          if (sh.closed) ctx.closePath();
+          ctx.strokeStyle = 'rgba(18,104,255,0.6)';
+          ctx.setLineDash([4, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.strokeStyle = '#1268ff';
+        for (const [hx, hy] of handles) {
+          const cxp = px(hx + 0.5);
+          const cyp = py(hy + 0.5);
+          ctx.beginPath();
+          ctx.arc(cxp, cyp, 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#fff';
+          ctx.fill();
+          ctx.stroke();
+        }
         ctx.restore();
       }
     }
@@ -590,6 +730,7 @@ export default function LoomCanvas() {
     editingImage,
     refNonce,
     selectedSelburoseId,
+    selectedShapeId,
   ]);
 
   // ---- pointer handlers ------------------------------------------------
@@ -658,19 +799,29 @@ export default function LoomCanvas() {
             : 1;
       }
       S().pushHistory();
-      refGesture.current = {
-        id: ref.id,
-        mode,
-        edge,
-        gx0: g.gx,
-        gy0: g.gy,
-        x0: ref.x,
-        y0: ref.y,
-        scale0: ref.scale,
-        rot0: ref.rotationDeg,
-        d0: Math.max(1e-3, Math.hypot(g.gx - ref.x, g.gy - ref.y)),
-        ang0: Math.atan2(g.gy - ref.y, g.gx - ref.x),
-      };
+      {
+        const th = (ref.rotationDeg * Math.PI) / 180;
+        const cos = Math.cos(-th);
+        const sin = Math.sin(-th);
+        const dx = g.gx - ref.x;
+        const dy = g.gy - ref.y;
+        refGesture.current = {
+          id: ref.id,
+          mode,
+          edge,
+          gx0: g.gx,
+          gy0: g.gy,
+          x0: ref.x,
+          y0: ref.y,
+          sx0: ref.scaleX,
+          sy0: ref.scaleY,
+          qx0: dx * cos - dy * sin,
+          qy0: dx * sin + dy * cos,
+          rot0: ref.rotationDeg,
+          d0: Math.max(1e-3, Math.hypot(g.gx - ref.x, g.gy - ref.y)),
+          ang0: Math.atan2(g.gy - ref.y, g.gx - ref.x),
+        };
+      }
       return;
     }
 
@@ -728,11 +879,158 @@ export default function LoomCanvas() {
           S().setActiveColor(o.colorIndex);
           break;
         }
+        const shp = hitShape(visibleShapes(d), g.cx, g.cy);
+        if (shp) {
+          S().setActiveColor(shapeById(d, shp)!.colorIndex);
+          break;
+        }
         if (inb) S().pickAt(c, r);
         break;
       }
       case 'select': {
         const g = toCellF(e.clientX, e.clientY);
+
+        // ---- line / box shapes: end / corner handles first, then the body
+        const grab = 0.6 + 9 / (PX_PER_COL * S().view.zoom);
+        const sSel = selectedShapeId ? shapeById(d, selectedShapeId) : undefined;
+        if (sSel) {
+          const near = (hx: number, hy: number) =>
+            Math.hypot(g.cx - (hx + 0.5), g.cy - (hy + 0.5)) <= grab;
+
+          // ---- polygon vertex editing ----
+          if (sSel.kind === 'poly') {
+            const vi = sSel.points.findIndex((p) => near(p[0], p[1]));
+            if (vi >= 0) {
+              if (e.altKey || e.button === 2) {
+                S().removeShapePoint(sSel.id, vi);
+                return;
+              }
+              S().pushHistory();
+              shapeGesture.current = {
+                id: sSel.id,
+                mode: 'vertex',
+                vi,
+                gx0: g.cx,
+                gy0: g.cy,
+                x0: 0,
+                y0: 0,
+                x1: 0,
+                y1: 0,
+                pts0: [],
+              };
+              return;
+            }
+            // click on an edge -> insert a new vertex there
+            const n = sSel.points.length;
+            const segs = sSel.closed ? n : n - 1;
+            for (let i = 0; i < segs; i++) {
+              const a = sSel.points[i];
+              const bb = sSel.points[(i + 1) % n];
+              if (
+                distToSegment(
+                  g.cx,
+                  g.cy,
+                  a[0] + 0.5,
+                  a[1] + 0.5,
+                  bb[0] + 0.5,
+                  bb[1] + 0.5,
+                ) <=
+                Math.max(0.7, sSel.thickness / 2 + 0.4)
+              ) {
+                S().insertShapePoint(sSel.id, i + 1, [
+                  Math.round(g.cx - 0.5),
+                  Math.round(g.cy - 0.5),
+                ]);
+                const nsh = shapeById(S().design, sSel.id);
+                S().pushHistory();
+                shapeGesture.current = {
+                  id: sSel.id,
+                  mode: 'vertex',
+                  vi: i + 1,
+                  gx0: g.cx,
+                  gy0: g.cy,
+                  x0: 0,
+                  y0: 0,
+                  x1: 0,
+                  y1: 0,
+                  pts0: [],
+                };
+                void nsh;
+                return;
+              }
+            }
+          }
+
+          const endMode: 'p0' | 'p1' | null = near(sSel.x0, sSel.y0)
+            ? 'p0'
+            : near(sSel.x1, sSel.y1)
+              ? 'p1'
+              : null;
+          const b = shapeGridBBox({
+            kind: sSel.kind,
+            x0: sSel.x0,
+            y0: sSel.y0,
+            x1: sSel.x1,
+            y1: sSel.y1,
+            points: sSel.points,
+            closed: sSel.closed,
+            thickness: sSel.thickness,
+            fill: sSel.fill,
+          });
+          const inBox =
+            g.cx >= b.minX - 0.5 &&
+            g.cx <= b.maxX + 0.5 &&
+            g.cy >= b.minY - 0.5 &&
+            g.cy <= b.maxY + 0.5;
+          if ((sSel.kind !== 'poly' && endMode) || inBox) {
+            S().pushHistory();
+            shapeGesture.current = {
+              id: sSel.id,
+              mode: sSel.kind !== 'poly' && endMode ? endMode : 'move',
+              vi: -1,
+              gx0: g.cx,
+              gy0: g.cy,
+              x0: sSel.x0,
+              y0: sSel.y0,
+              x1: sSel.x1,
+              y1: sSel.y1,
+              pts0: sSel.points.map((p): [number, number] => [p[0], p[1]]),
+            };
+            return;
+          }
+        }
+        const shpHit = hitShape(visibleShapes(d), g.cx, g.cy);
+        if (shpHit) {
+          const now = Date.now();
+          if (
+            lastTap.current &&
+            lastTap.current.id === shpHit &&
+            now - lastTap.current.t < 350
+          ) {
+            lastTap.current = null;
+            S().selectShape(shpHit);
+            S().openShapeEditor(shpHit);
+            return;
+          }
+          lastTap.current = { id: shpHit, t: now };
+          const o = shapeById(d, shpHit)!;
+          S().selectShape(shpHit);
+          S().pushHistory();
+          shapeGesture.current = {
+            id: shpHit,
+            mode: 'move',
+            vi: -1,
+            gx0: g.cx,
+            gy0: g.cy,
+            x0: o.x0,
+            y0: o.y0,
+            x1: o.x1,
+            y1: o.y1,
+            pts0: o.points.map((p): [number, number] => [p[0], p[1]]),
+          };
+          return;
+        }
+
         const stars = visibleStars(d);
         const hit = hitSelburose(stars, g.cx, g.cy);
         if (hit) {
@@ -755,6 +1053,7 @@ export default function LoomCanvas() {
           return;
         }
         S().selectSelburose(null);
+        S().selectShape(null);
         anchor.current = { c, r };
         setDrag({ mode: 'select', ax: c, ay: r, bx: c, by: r });
         break;
@@ -764,6 +1063,53 @@ export default function LoomCanvas() {
       case 'rectFill': {
         anchor.current = { c, r };
         setDrag({ mode: tool as Drag['mode'], ax: c, ay: r, bx: c, by: r });
+        break;
+      }
+      case 'poly': {
+        if (!inb) return;
+        const g = toCellF(e.clientX, e.clientY);
+        const draft =
+          selectedShapeId && shapeById(d, selectedShapeId)?.kind === 'poly'
+            ? shapeById(d, selectedShapeId)!
+            : null;
+        if (!draft) {
+          S().addShape({
+            kind: 'poly',
+            x0: c,
+            y0: r,
+            x1: c,
+            y1: r,
+            points: [[c, r]],
+            closed: false,
+            thickness: S().lineThickness,
+            fill: false,
+            colorIndex: S().activeColor,
+          });
+          break;
+        }
+        // click on / near the first vertex closes the path and finishes
+        const first = draft.points[0];
+        if (
+          draft.points.length >= 3 &&
+          Math.hypot(g.cx - (first[0] + 0.5), g.cy - (first[1] + 0.5)) <= 1.2
+        ) {
+          S().updateShape(draft.id, { closed: true });
+          S().setTool('select');
+          S().selectShape(draft.id);
+          break;
+        }
+        // a second click on the last point (or on top of it) ends an open line
+        const last = draft.points[draft.points.length - 1];
+        if (
+          draft.points.length >= 2 &&
+          Math.abs(c - last[0]) <= 1 &&
+          Math.abs(r - last[1]) <= 1
+        ) {
+          S().setTool('select');
+          S().selectShape(draft.id);
+          break;
+        }
+        S().appendShapePoint(draft.id, [c, r]);
         break;
       }
     }
@@ -809,12 +1155,38 @@ export default function LoomCanvas() {
       if (g.mode === 'move') {
         patch = { x: g.x0 + (p.gx - g.gx0), y: g.y0 + (p.gy - g.gy0) };
       } else if (g.mode === 'scale') {
-        const dNow = Math.hypot(p.gx - g.x0, p.gy - g.y0);
-        patch = { scale: Math.max((g.scale0 * dNow) / g.d0, 2 / ref.w) };
+        // read the grab point in the image's un-rotated frame
+        const th = (g.rot0 * Math.PI) / 180;
+        const cos = Math.cos(-th);
+        const sin = Math.sin(-th);
+        const dx = p.gx - g.x0;
+        const dy = p.gy - g.y0;
+        const qx = dx * cos - dy * sin;
+        const qy = dx * sin + dy * cos;
+        const minX = 2 / ref.w;
+        const minY = 2 / ref.h;
+        if (e.shiftKey) {
+          // Shift locks the aspect ratio — one uniform factor.
+          const f =
+            Math.hypot(qx, qy) / Math.max(1e-6, Math.hypot(g.qx0, g.qy0));
+          patch = {
+            scaleX: Math.max(g.sx0 * f, minX),
+            scaleY: Math.max(g.sy0 * f, minY),
+          };
+        } else {
+          // default — each axis follows its own edge freely
+          const fx = qx / (Math.abs(g.qx0) < 1e-6 ? 1e-6 : g.qx0);
+          const fy = qy / (Math.abs(g.qy0) < 1e-6 ? 1e-6 : g.qy0);
+          patch = {
+            scaleX: Math.max(g.sx0 * fx, minX),
+            scaleY: Math.max(g.sy0 * fy, minY),
+          };
+        }
       } else if (g.mode === 'rotate') {
         const ang = Math.atan2(p.gy - g.y0, p.gx - g.x0);
         let deg = g.rot0 + ((ang - g.ang0) * 180) / Math.PI;
         deg = ((((deg + 180) % 360) + 360) % 360) - 180;
+        if (e.shiftKey) deg = Math.round(deg / 15) * 15; // snap to 15° steps
         patch = { rotationDeg: deg };
       } else {
         // skew — undo translate + rotation, then read the offset in skew-space
@@ -826,10 +1198,10 @@ export default function LoomCanvas() {
         const qx = dx * cos - dy * sin;
         const qy = dx * sin + dy * cos;
         if (g.mode === 'skewX') {
-          const bx = (-g.edge * 2 * qx) / (ref.h * g.scale0 || 1e-6);
+          const bx = (-g.edge * 2 * qx) / (ref.h * g.sy0 || 1e-6);
           patch = { skewXDeg: clamp((Math.atan(bx) * 180) / Math.PI, -70, 70) };
         } else {
-          const by = (g.edge * 2 * qy) / (ref.w * g.scale0 || 1e-6);
+          const by = (g.edge * 2 * qy) / (ref.w * g.sx0 || 1e-6);
           patch = { skewYDeg: clamp((Math.atan(by) * 180) / Math.PI, -70, 70) };
         }
       }
@@ -856,6 +1228,56 @@ export default function LoomCanvas() {
         snapSelburoseCenter(od.ox + (g.cx - od.gx0), m),
         snapSelburoseCenter(od.oy + (g.cy - od.gy0), m),
       );
+      return;
+    }
+
+    if (shapeGesture.current) {
+      const sg = shapeGesture.current;
+      const g = toCellF(e.clientX, e.clientY);
+      const ddx = Math.round(g.cx - sg.gx0);
+      const ddy = Math.round(g.cy - sg.gy0);
+      const { columns, rows } = S().design.loom;
+      if (sg.mode === 'vertex') {
+        S().moveShapePoint(sg.id, sg.vi, [
+          clamp(Math.round(g.cx - 0.5), 0, columns - 1),
+          clamp(Math.round(g.cy - 0.5), 0, rows - 1),
+        ]);
+      } else if (sg.mode === 'move') {
+        // absolute from the gesture-start geometry — no compounding
+        if (sg.pts0.length) {
+          const xs = sg.pts0.map((p) => p[0]);
+          const ys = sg.pts0.map((p) => p[1]);
+          const dx = Math.round(
+            clamp(ddx, -Math.min(...xs), columns - 1 - Math.max(...xs)),
+          );
+          const dy = Math.round(
+            clamp(ddy, -Math.min(...ys), rows - 1 - Math.max(...ys)),
+          );
+          S().updateShape(sg.id, {
+            points: sg.pts0.map((p): [number, number] => [p[0] + dx, p[1] + dy]),
+          });
+        } else {
+          const minX = Math.min(sg.x0, sg.x1);
+          const maxX = Math.max(sg.x0, sg.x1);
+          const minY = Math.min(sg.y0, sg.y1);
+          const maxY = Math.max(sg.y0, sg.y1);
+          const dx = Math.round(clamp(ddx, -minX, columns - 1 - maxX));
+          const dy = Math.round(clamp(ddy, -minY, rows - 1 - maxY));
+          S().updateShape(sg.id, {
+            x0: sg.x0 + dx,
+            y0: sg.y0 + dy,
+            x1: sg.x1 + dx,
+            y1: sg.y1 + dy,
+          });
+        }
+      } else {
+        const cx = clamp((sg.mode === 'p0' ? sg.x0 : sg.x1) + ddx, 0, columns - 1);
+        const cy = clamp((sg.mode === 'p0' ? sg.y0 : sg.y1) + ddy, 0, rows - 1);
+        S().updateShape(
+          sg.id,
+          sg.mode === 'p0' ? { x0: cx, y0: cy } : { x1: cx, y1: cy },
+        );
+      }
       return;
     }
 
@@ -900,6 +1322,11 @@ export default function LoomCanvas() {
       return;
     }
 
+    if (shapeGesture.current) {
+      shapeGesture.current = null;
+      return;
+    }
+
     if (painting.current) {
       painting.current = false;
       lastCell.current = null;
@@ -921,15 +1348,22 @@ export default function LoomCanvas() {
             r1: clamp(rn.r1, 0, d.loom.rows - 1),
           });
         }
-      } else {
-        S().pushHistory();
-        if (mode === 'line') S().paintLine(ax, ay, bx, by, S().activeColor);
-        else
-          S().paintRect(
-            normRect({ c: ax, r: ay }, { c: bx, r: by }),
-            S().activeColor,
-            mode === 'rectFill',
-          );
+      } else if (!(ax === bx && ay === by) || mode === 'line') {
+        // Each line / box becomes its own live, re-editable shape layer.
+        const { columns, rows } = d.loom;
+        const cl = (v: number, m: number) => clamp(v, 0, m - 1);
+        S().addShape({
+          kind: mode === 'line' ? 'line' : 'box',
+          x0: cl(ax, columns),
+          y0: cl(ay, rows),
+          x1: cl(bx, columns),
+          y1: cl(by, rows),
+          points: [],
+          closed: false,
+          thickness: mode === 'line' ? S().lineThickness : 1,
+          fill: mode === 'rectFill',
+          colorIndex: S().activeColor,
+        });
       }
       setDrag(null);
       anchor.current = null;
@@ -1006,6 +1440,79 @@ function hitSelburose(
     // the central hole reads as part of the star: allow grabbing it there
     const hole = selburoseInsetShift(o.gap) + 0.75;
     if (Math.hypot(gx - o.cx, gy - o.cy) <= hole) return o.id;
+  }
+  return null;
+}
+
+/** Shapes from visible shape layers, bottom → top. */
+function visibleShapes(design: BeadDesign): ShapeObject[] {
+  const out: ShapeObject[] = [];
+  for (const l of design.layers)
+    if (l.kind === 'shape' && l.visible) out.push(l.shape);
+  return out;
+}
+
+function shapeById(design: BeadDesign, id: string): ShapeObject | undefined {
+  const l = design.layers.find((x) => x.kind === 'shape' && x.id === id);
+  return l && l.kind === 'shape' ? l.shape : undefined;
+}
+
+/** Distance from point (px,py) to segment (ax,ay)-(bx,by), all in cell units. */
+function distToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy || 1;
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/** Topmost shape under the point (cell-space), or null. */
+function hitShape(shapes: ShapeObject[], gx: number, gy: number): string | null {
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const s = shapes[i];
+    if (s.kind === 'poly') {
+      const pts = s.points;
+      if (s.closed && s.fill && pts.length >= 3) {
+        if (pointInPolygon(gx, gy, pts.map((p) => [p[0] + 0.5, p[1] + 0.5])))
+          return s.id;
+      }
+      const r = Math.max(0.7, s.thickness / 2 + 0.4);
+      const segs = s.closed ? pts.length : pts.length - 1;
+      for (let k = 0; k < segs; k++) {
+        const a = pts[k];
+        const b = pts[(k + 1) % pts.length];
+        if (
+          distToSegment(gx, gy, a[0] + 0.5, a[1] + 0.5, b[0] + 0.5, b[1] + 0.5) <=
+          r
+        )
+          return s.id;
+      }
+      continue;
+    }
+    if (s.kind === 'line') {
+      const r = Math.max(0.6, s.thickness / 2 + 0.4);
+      if (distToSegment(gx, gy, s.x0 + 0.5, s.y0 + 0.5, s.x1 + 0.5, s.y1 + 0.5) <= r)
+        return s.id;
+    } else {
+      const c0 = Math.min(s.x0, s.x1);
+      const c1 = Math.max(s.x0, s.x1) + 1;
+      const r0 = Math.min(s.y0, s.y1);
+      const r1 = Math.max(s.y0, s.y1) + 1;
+      const inside = gx >= c0 && gx <= c1 && gy >= r0 && gy <= r1;
+      if (!inside) continue;
+      if (s.fill) return s.id;
+      const t = Math.max(1, s.thickness) + 0.6;
+      if (gx - c0 <= t || c1 - gx <= t || gy - r0 <= t || r1 - gy <= t)
+        return s.id;
+    }
   }
   return null;
 }

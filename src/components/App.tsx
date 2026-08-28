@@ -50,7 +50,8 @@ export default function App() {
         return;
       }
       if (mod && k === 'v') {
-        if (s.clipboard) s.setPasteMode(true);
+        if (s.starClipboard) s.pasteStar();
+        else if (s.clipboard) s.setPasteMode(true);
         return;
       }
       if (mod && k === 'a') {
@@ -74,13 +75,34 @@ export default function App() {
         } else if (s.selectedSelburoseId) {
           e.preventDefault();
           s.removeSelburose(s.selectedSelburoseId);
+        } else if (s.selectedShapeId) {
+          e.preventDefault();
+          s.removeShape(s.selectedShapeId);
         }
         return;
       }
       if (e.key === 'Escape') {
+        // finishing a polygon: drop the point-adding tool, keep the shape
+        if (s.tool === 'poly' && s.selectedShapeId) {
+          s.setTool('select');
+          return;
+        }
         s.setPasteMode(false);
         s.setSelection(null);
         s.selectSelburose(null);
+        s.selectShape(null);
+        return;
+      }
+
+      if (
+        k.startsWith('arrow') &&
+        (s.selectedSelburoseId || s.selectedImageId || s.selectedShapeId)
+      ) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const dx = k === 'arrowleft' ? -step : k === 'arrowright' ? step : 0;
+        const dy = k === 'arrowup' ? -step : k === 'arrowdown' ? step : 0;
+        if (dx || dy) s.nudgeSelected(dx, dy, e.repeat);
         return;
       }
 

@@ -49,6 +49,10 @@ test('layers: create, paint, hide, reorder, rename, delete', async ({ page }) =>
   }, layer2);
   expect(beadsByLayer).toEqual({ bottom: 0, top: 5 });
 
+  // the painted layer shows a dominant-colour swatch; the empty one keeps its icon
+  await expect(rows(page).first().locator('.layer-swatch')).toBeVisible();
+  await expect(rows(page).last().locator('.layer-swatch')).toHaveCount(0);
+
   // hide the top layer -> composite drops to 0
   await rows(page).first().locator('.eye').click();
   s = await snapshot(page);

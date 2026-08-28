@@ -1,5 +1,5 @@
 import { useStore } from '../store/useStore';
-import type { ToolId } from '../types';
+import type { ShapeLayer, ToolId } from '../types';
 import { Icon, type IconName } from './icons';
 
 const TOOLS: Array<{ id: ToolId; icon: IconName; label: string }> = [
@@ -10,6 +10,7 @@ const TOOLS: Array<{ id: ToolId; icon: IconName; label: string }> = [
   { id: 'line', icon: 'line', label: 'Line' },
   { id: 'rect', icon: 'square', label: 'Box' },
   { id: 'rectFill', icon: 'square-fill', label: 'Box+' },
+  { id: 'poly', icon: 'poly', label: 'Poly' },
   { id: 'select', icon: 'marquee', label: 'Select' },
   { id: 'wand', icon: 'wand', label: 'Wand' },
   { id: 'pan', icon: 'move', label: 'Pan' },
@@ -19,8 +20,23 @@ export default function Toolbar() {
   const s = useStore();
   const hasSel = !!s.selection;
   const hasClip = !!s.clipboard;
+  const hasStarClip = !!s.starClipboard;
   const selId = s.selectedSelburoseId;
+  const shapeId = s.selectedShapeId;
   const rightPanel = s.rightPanel;
+
+  const selShape = shapeId
+    ? (
+        s.design.layers.find(
+          (l) => l.kind === 'shape' && l.id === shapeId,
+        ) as ShapeLayer | undefined
+      )?.shape
+    : undefined;
+  const showThickness =
+    s.tool === 'line' ||
+    s.tool === 'poly' ||
+    (!!selShape && (selShape.kind !== 'box' || !selShape.fill));
+  const thickness = selShape ? selShape.thickness : s.lineThickness;
 
   return (
     <div className="toolrail" role="toolbar" aria-label="Tools">
@@ -116,7 +132,7 @@ export default function Toolbar() {
       <button
         className="tool"
         onClick={s.copySelection}
-        disabled={!hasSel}
+        disabled={!hasSel && !selId}
         title="Copy selection"
         aria-label="Copy selection"
       >
@@ -126,7 +142,7 @@ export default function Toolbar() {
       <button
         className="tool"
         onClick={s.cutSelection}
-        disabled={!hasSel}
+        disabled={!hasSel && !selId}
         title="Cut selection"
         aria-label="Cut selection"
       >
@@ -135,8 +151,8 @@ export default function Toolbar() {
       </button>
       <button
         className={'tool' + (s.pasteMode ? ' active' : '')}
-        onClick={() => s.setPasteMode(!s.pasteMode)}
-        disabled={!hasClip}
+        onClick={() => (hasStarClip ? s.pasteStar() : s.setPasteMode(!s.pasteMode))}
+        disabled={!hasClip && !hasStarClip}
         title="Paste — then tap the grid to drop"
         aria-label="Paste"
         aria-pressed={s.pasteMode}
@@ -157,14 +173,41 @@ export default function Toolbar() {
 
       <div className="sep" aria-hidden="true" />
 
+      {showThickness && (
+        <div className="tool thickness" aria-label="Line thickness">
+          <div className="stepper">
+            <button
+              className="btn mini"
+              onClick={() => s.setLineThickness(thickness - 1)}
+              aria-label="Thinner"
+            >
+              −
+            </button>
+            <span>{thickness}</span>
+            <button
+              className="btn mini"
+              onClick={() => s.setLineThickness(thickness + 1)}
+              aria-label="Thicker"
+            >
+              +
+            </button>
+          </div>
+          <span className="lb">Weight</span>
+        </div>
+      )}
+
       <button
         className="tool"
         onClick={() =>
           selId
             ? s.transformSelburose(selId, 'flipH')
-            : s.flip('h', hasSel ? 'selection' : 'all')
+            : shapeId
+              ? s.transformShape(shapeId, 'flipH')
+              : s.flip('h', hasSel ? 'selection' : 'all')
         }
-        title={selId ? 'Mirror the selected Selburose' : 'Mirror left/right'}
+        title={
+          selId || shapeId ? 'Mirror the selected object' : 'Mirror left/right'
+        }
         aria-label="Mirror left/right"
       >
         <Icon name="flip-h" />
@@ -175,9 +218,13 @@ export default function Toolbar() {
         onClick={() =>
           selId
             ? s.transformSelburose(selId, 'flipV')
-            : s.flip('v', hasSel ? 'selection' : 'all')
+            : shapeId
+              ? s.transformShape(shapeId, 'flipV')
+              : s.flip('v', hasSel ? 'selection' : 'all')
         }
-        title={selId ? 'Mirror the selected Selburose' : 'Mirror up/down'}
+        title={
+          selId || shapeId ? 'Mirror the selected object' : 'Mirror up/down'
+        }
         aria-label="Mirror up/down"
       >
         <Icon name="flip-v" />
@@ -188,9 +235,15 @@ export default function Toolbar() {
         onClick={() =>
           selId
             ? s.transformSelburose(selId, 'rot180')
-            : s.rotate180(hasSel ? 'selection' : 'all')
+            : shapeId
+              ? s.transformShape(shapeId, 'rot180')
+              : s.rotate180(hasSel ? 'selection' : 'all')
         }
-        title={selId ? 'Rotate the selected Selburose 180°' : 'Rotate 180°'}
+        title={
+          selId || shapeId
+            ? 'Rotate the selected object 180°'
+            : 'Rotate 180°'
+        }
         aria-label="Rotate 180 degrees"
       >
         <Icon name="rotate" />

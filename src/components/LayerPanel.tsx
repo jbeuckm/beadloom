@@ -1,18 +1,61 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { Icon } from './icons';
 import { rasterCount } from '../lib/layers';
+import { ensureImage, imageSamples, subscribeImages } from '../lib/referenceImage';
 import type { Layer } from '../types';
+
+const toHex = (r: number, g: number, b: number) =>
+  '#' +
+  [r, g, b]
+    .map((x) =>
+      Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0'),
+    )
+    .join('');
+
+/** The colour that most represents a layer: its most-used bead, the star's
+ *  fill, or an image's average pixel. Null when there's nothing to show yet. */
+function dominantHex(l: Layer, hexes: string[]): string | null {
+  if (l.kind === 'selburose') return hexes[l.star.colorIndex] ?? null;
+  if (l.kind === 'shape') return hexes[l.shape.colorIndex] ?? null;
+  if (l.kind === 'raster') {
+    const counts = new Map<number, number>();
+    for (const row of l.data)
+      for (const v of row) if (v >= 0) counts.set(v, (counts.get(v) ?? 0) + 1);
+    let best = -1;
+    let bestN = 0;
+    for (const [v, n] of counts) if (n > bestN) [best, bestN] = [v, n];
+    return best >= 0 ? hexes[best] ?? null : null;
+  }
+  ensureImage(l.src);
+  const smp = imageSamples(l.src, 800);
+  if (!smp.length) return null;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const [pr, pg, pb] of smp) {
+    r += pr;
+    g += pg;
+    b += pb;
+  }
+  return toHex(r / smp.length, g / smp.length, b / smp.length);
+}
 
 export default function LayerPanel({ onClose }: { onClose: () => void }) {
   const layers = useStore((s) => s.design.layers);
   const activeLayer = useStore((s) => s.activeLayer);
   const selectedSelburoseId = useStore((s) => s.selectedSelburoseId);
   const selectedImageId = useStore((s) => s.selectedImageId);
+  const selectedShapeId = useStore((s) => s.selectedShapeId);
+  const hexes = useStore((s) => s.design.palette.colors.map((c) => c.hex));
   const s = useStore();
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [, setImgNonce] = useState(0);
+
+  // repaint the swatches when an image layer's bitmap finishes decoding
+  useEffect(() => subscribeImages(() => setImgNonce((n) => n + 1)), []);
 
   const onlyRaster = rasterCount(layers) <= 1;
 
@@ -37,7 +80,10 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
   const rowClick = (l: Layer) => {
     if (l.kind === 'raster') s.setActiveLayer(l.id);
     else if (l.kind === 'selburose') s.selectSelburose(l.id);
-    else {
+    else if (l.kind === 'shape') {
+      s.selectShape(l.id);
+      s.openShapeEditor(l.id);
+    } else {
       s.selectImage(l.id);
       s.setRightPanel('reference');
     }
@@ -45,8 +91,14 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
 
   const kindIcon = (
     k: Layer['kind'],
-  ): 'selburose' | 'image' | 'swatches' =>
-    k === 'selburose' ? 'selburose' : k === 'image' ? 'image' : 'swatches';
+  ): 'selburose' | 'image' | 'line' | 'swatches' =>
+    k === 'selburose'
+      ? 'selburose'
+      : k === 'image'
+        ? 'image'
+        : k === 'shape'
+          ? 'line'
+          : 'swatches';
 
   return (
     <div className="layer-panel dock-panel">
@@ -67,7 +119,8 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
             const active = l.kind === 'raster' && l.id === activeLayer;
             const picked =
               (l.kind === 'selburose' && l.id === selectedSelburoseId) ||
-              (l.kind === 'image' && l.id === selectedImageId);
+              (l.kind === 'image' && l.id === selectedImageId) ||
+              (l.kind === 'shape' && l.id === selectedShapeId);
             return (
               <div
                 key={l.id}
@@ -99,7 +152,19 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
                 >
                   <Icon name={l.visible ? 'eye' : 'eye-off'} size={16} />
                 </button>
-                <Icon name={kindIcon(l.kind)} size={15} />
+                {(() => {
+                  const hex = dominantHex(l, hexes);
+                  return hex ? (
+                    <span
+                      className="layer-swatch"
+                      style={{ background: hex }}
+                      title={`Dominant colour ${hex}`}
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Icon name={kindIcon(l.kind)} size={15} />
+                  );
+                })()}
                 {renaming === l.id ? (
                   <input
                     className="layer-name-input"

@@ -10,8 +10,16 @@ interface Entry {
 
 const cache = new Map<string, Entry>();
 const subscribers = new Set<() => void>();
+let epoch = 0;
+
+/** Bumped whenever a bitmap finishes decoding or is revoked — lets pure
+ *  consumers (trace caches) know their inputs changed. */
+export function imageEpoch(): number {
+  return epoch;
+}
 
 function notify() {
+  epoch++;
   for (const fn of subscribers) fn();
 }
 
@@ -67,6 +75,7 @@ export function bitmapReady(src: string): boolean {
 export function revokeImage(src: string): void {
   if (!cache.has(src)) return;
   cache.delete(src);
+  epoch++;
   try {
     URL.revokeObjectURL(src);
   } catch {

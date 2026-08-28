@@ -5,6 +5,7 @@ import { compositeLayers } from '../lib/layers';
 
 export default function StatusBar() {
   const design = useStore((s) => s.design);
+  const imageEpoch = useStore((s) => s.imageEpoch);
   const activeLayer = useStore((s) => s.activeLayer);
   const selection = useStore((s) => s.selection);
   const clipboard = useStore((s) => s.clipboard);
@@ -18,7 +19,8 @@ export default function StatusBar() {
   const { total, distinct } = useMemo(() => {
     const g = compositeLayers(design);
     return { total: totalBeads(g), distinct: colorUsage(g).size };
-  }, [design]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [design, imageEpoch]);
 
   const inBounds =
     cursor && cursor.c >= 0 && cursor.r >= 0 && cursor.c < columns && cursor.r < rows;
