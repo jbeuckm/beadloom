@@ -126,29 +126,8 @@ textarea {
   letter-spacing: 0.04em;
   padding: 0 4px;
 }
-.dim-step {
-  width: var(--tap);
-  height: var(--tap);
-  flex: none;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 22px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  user-select: none;
-  touch-action: none;
-}
-.dim-step:active {
-  background: var(--ink);
-  color: #fff;
-}
 .dim-value {
-  width: 54px;
+  width: 46px;
   height: var(--tap);
   padding: 0 4px;
   text-align: center;
@@ -157,6 +136,17 @@ textarea {
   background: #fff;
   font-size: 16px;
   font-variant-numeric: tabular-nums;
+}
+.dim-x {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+.dim-est {
+  font-size: 11px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0 4px 0 6px;
 }
 
 /* ---------- buttons ---------- */

@@ -73,8 +73,8 @@ test('guided walkthrough with screenshots', async ({ page }) => {
   await shot(page, '07-mirror-horizontal');
 
   // 8 — resize the grid from the top-bar column stepper -----------
-  await page.locator('.dim-group', { hasText: 'Cols' }).locator('input').fill('120');
-  await page.locator('.dim-group', { hasText: 'Cols' }).locator('input').blur();
+  await page.getByLabel('Column count').fill('120');
+  await page.getByLabel('Column count').blur();
   await shot(page, '08-resize-columns');
 
   // 9 — the File menu ---------------------------------------------

@@ -226,12 +226,12 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
   expect((await snapshot(page)).background).toBe('#FF8800');
 
   // === 12. Grid resize two ways ==================================
-  const colInput = page.locator('.dim-group', { hasText: 'Cols' }).locator('input');
+  const colInput = page.getByLabel('Column count');
   await colInput.fill('50');
   await colInput.blur();
   expect((await snapshot(page)).columns).toBe(50);
 
-  const rowInput = page.locator('.dim-group', { hasText: 'Rows' }).locator('input');
+  const rowInput = page.getByLabel('Row count');
   await rowInput.fill('34');
   await rowInput.blur();
   expect((await snapshot(page)).rows).toBe(34);

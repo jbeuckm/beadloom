@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import Menu, { MenuItem } from './Menu';
 import { Icon } from './icons';
@@ -8,50 +7,14 @@ import * as storage from '../lib/storage';
 
 export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help';
 
-/** Press-and-hold auto-repeat for the ± steppers, with one history entry per hold. */
-function useHoldRepeat(step: () => void, onStart?: () => void) {
-  const timers = useRef<number[]>([]);
-  const stop = () => {
-    timers.current.forEach((t) => clearTimeout(t));
-    timers.current = [];
-  };
-  useEffect(() => stop, []);
+/** ~11/0 seed beads: 74 columns is about 6 inches, so one column ≈ this. */
+const IN_PER_COL = 6 / 74;
 
-  const start = () => {
-    onStart?.();
-    step();
-    let delay = 300;
-    const tick = () => {
-      step();
-      delay = Math.max(28, delay * 0.8);
-      timers.current.push(window.setTimeout(tick, delay));
-    };
-    timers.current.push(window.setTimeout(tick, delay));
-  };
-
-  return {
-    onPointerDown: (e: ReactPointerEvent) => {
-      e.preventDefault();
-      start();
-    },
-    onPointerUp: stop,
-    onPointerLeave: stop,
-    onPointerCancel: stop,
-  };
-}
-
-function DimGroup({ axis }: { axis: 'columns' | 'rows' }) {
+function SizeField({ axis }: { axis: 'columns' | 'rows' }) {
   const value = useStore((s) => s.design.loom[axis]);
-  const setDim = useStore((s) => (axis === 'columns' ? s.setColumns : s.setRows));
+  const apply = useStore((s) => (axis === 'columns' ? s.setColumns : s.setRows));
   const pushHistory = useStore((s) => s.pushHistory);
-
-  const isCols = axis === 'columns';
-  const noun = isCols ? 'columns' : 'rows';
   const [draft, setDraft] = useState<string | null>(null);
-
-  const bump = (d: number) => setDim(useStore.getState().design.loom[axis] + d);
-  const dec = useHoldRepeat(() => bump(-1), pushHistory);
-  const inc = useHoldRepeat(() => bump(1), pushHistory);
 
   const commit = () => {
     if (draft === null) return;
@@ -59,47 +22,53 @@ function DimGroup({ axis }: { axis: 'columns' | 'rows' }) {
     setDraft(null);
     if (Number.isFinite(n) && n >= 1 && n !== value) {
       pushHistory();
-      setDim(n);
+      apply(n);
     }
   };
 
   return (
+    <input
+      className="dim-value"
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      value={draft ?? String(value)}
+      aria-label={axis === 'columns' ? 'Column count' : 'Row count'}
+      onFocus={(e) => {
+        setDraft(String(value));
+        e.currentTarget.select();
+      }}
+      onChange={(e) => setDraft(e.target.value.replace(/\D/g, '').slice(0, 4))}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+      }}
+    />
+  );
+}
+
+function LoomSize() {
+  const columns = useStore((s) => s.design.loom.columns);
+  const rows = useStore((s) => s.design.loom.rows);
+  const aspect = useStore((s) => s.design.loom.cellAspect);
+  const inW = columns * IN_PER_COL;
+  const inH = rows * IN_PER_COL * aspect;
+  const fmt = (n: number) => (n < 9.95 ? n.toFixed(1) : Math.round(n).toString());
+
+  return (
     <div className="dim-group">
-      <label htmlFor={`dim-${axis}`}>{isCols ? 'Cols' : 'Rows'}</label>
-      <button
-        className="dim-step"
-        title={`Fewer ${noun}`}
-        aria-label={`Fewer ${noun}`}
-        {...dec}
+      <label htmlFor="dim-columns">Size</label>
+      <SizeField axis="columns" />
+      <span className="dim-x" aria-hidden="true">
+        ×
+      </span>
+      <SizeField axis="rows" />
+      <span
+        className="dim-est"
+        title="Approximate finished size with 11/0 seed beads (about 74 columns per 6 in)"
       >
-        −
-      </button>
-      <input
-        id={`dim-${axis}`}
-        className="dim-value"
-        type="text"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        value={draft ?? String(value)}
-        aria-label={isCols ? 'Column count' : 'Row count'}
-        onFocus={(e) => {
-          setDraft(String(value));
-          e.currentTarget.select();
-        }}
-        onChange={(e) => setDraft(e.target.value.replace(/\D/g, '').slice(0, 4))}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        }}
-      />
-      <button
-        className="dim-step"
-        title={`More ${noun}`}
-        aria-label={`More ${noun}`}
-        {...inc}
-      >
-        +
-      </button>
+        ≈ {fmt(inW)} × {fmt(inH)} in
+      </span>
     </div>
   );
 }
@@ -217,8 +186,7 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
 
       <div className="spacer" />
 
-      <DimGroup axis="columns" />
-      <DimGroup axis="rows" />
+      <LoomSize />
     </div>
   );
 }

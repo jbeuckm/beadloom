@@ -257,7 +257,7 @@ test('background colour of empty cells is editable', async ({ page }) => {
 });
 
 test('column count is adjustable from the top bar', async ({ page }) => {
-  const input = page.locator('.dim-group', { hasText: 'Cols' }).locator('input');
+  const input = page.getByLabel('Column count');
   await input.fill('32');
   await input.blur();
   expect((await snapshot(page)).columns).toBe(32);
