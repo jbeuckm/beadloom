@@ -77,11 +77,25 @@ export function selburoseLayerCells(
 
 /** Flatten every visible layer into one grid; higher non-empty cells win. */
 export function compositeLayers(design: BeadDesign): number[][] {
+  return compositeRange(design, 0, design.layers.length - 1);
+}
+
+/**
+ * Composite the layers at indices [from..to] inclusive into one grid.
+ * `includeHidden` forces hidden layers in too (used when merging layers).
+ */
+export function compositeRange(
+  design: BeadDesign,
+  from: number,
+  to: number,
+  includeHidden = false,
+): number[][] {
   const { columns: cols, rows } = design.loom;
   const nColors = design.palette.colors.length;
   const out = emptyGrid(cols, rows);
-  for (const layer of design.layers) {
-    if (!layer.visible) continue;
+  for (let i = Math.max(0, from); i <= Math.min(design.layers.length - 1, to); i++) {
+    const layer = design.layers[i];
+    if (!layer.visible && !includeHidden) continue;
     if (layer.kind === 'image') {
       // A placed image shows its palette-matched trace live; it only becomes
       // real raster pixels when the user flattens it.

@@ -756,6 +756,17 @@ kbd {
   flex-direction: column;
   gap: 10px;
 }
+.layer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.layer-actions .btn {
+  flex: 1 1 auto;
+}
+.layer-actions .btn.grow {
+  flex: 1 1 100%;
+}
 .layer-list {
   display: flex;
   flex-direction: column;

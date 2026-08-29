@@ -27,6 +27,7 @@ import {
 } from '../types';
 import {
   compositeLayers,
+  compositeRange,
   emptyRasterLayer,
   nextLayerName,
   rasterCount,
@@ -257,6 +258,8 @@ export interface StoreState {
   setActiveLayer: (id: string) => void;
   addLayer: () => void;
   removeLayer: (id: string) => void;
+  duplicateLayer: (id: string) => void;
+  mergeLayerDown: (id: string) => void;
   moveLayer: (id: string, dir: -1 | 1) => void;
   reorderLayers: (ordered: Layer[]) => void;
   renameLayer: (id: string, name: string) => void;
@@ -1116,7 +1119,13 @@ export const useStore = create<StoreState>()(
       const layer = s0.design.layers.find((l) => l.id === id);
       if (!layer) return;
       if (layer.kind === 'raster' && rasterCount(s0.design.layers) <= 1) return;
-      if (layer.kind === 'image') revokeImage(layer.src);
+      if (
+        layer.kind === 'image' &&
+        !s0.design.layers.some(
+          (l) => l !== layer && l.kind === 'image' && l.src === layer.src,
+        )
+      )
+        revokeImage(layer.src);
       s0.pushHistory();
       set((s) => {
         const layers = s.design.layers.filter((l) => l.id !== id);
@@ -1138,6 +1147,97 @@ export const useStore = create<StoreState>()(
           dirty: true,
         };
       });
+    },
+
+    duplicateLayer: (id) => {
+      const s0 = get();
+      const idx = s0.design.layers.findIndex((l) => l.id === id);
+      if (idx < 0) return;
+      const src = s0.design.layers[idx];
+      const nid = uid();
+      const base = { id: nid, name: `${src.name} copy`, visible: src.visible };
+      let copy: Layer;
+      if (src.kind === 'raster')
+        copy = { ...base, kind: 'raster', data: src.data.map((r) => r.slice()) };
+      else if (src.kind === 'selburose')
+        copy = { ...base, kind: 'selburose', star: { ...src.star, id: nid } };
+      else if (src.kind === 'shape')
+        copy = {
+          ...base,
+          kind: 'shape',
+          shape: {
+            ...src.shape,
+            id: nid,
+            points: src.shape.points.map(
+              (p): [number, number] => [p[0], p[1]],
+            ),
+          },
+        };
+      else copy = { ...src, ...base, kind: 'image' };
+      s0.pushHistory();
+      set((s) => {
+        const layers = s.design.layers.slice();
+        const at = s.design.layers.findIndex((l) => l.id === id);
+        layers.splice((at < 0 ? layers.length - 1 : at) + 1, 0, copy);
+        const patch: Partial<StoreState> = {
+          design: { ...s.design, layers },
+          dirty: true,
+        };
+        if (copy.kind === 'raster') patch.activeLayer = nid;
+        else if (copy.kind === 'selburose') patch.selectedSelburoseId = nid;
+        else if (copy.kind === 'shape') patch.selectedShapeId = nid;
+        else patch.selectedImageId = nid;
+        return patch;
+      });
+    },
+
+    // Flatten a layer into the one directly below it, replacing both with a
+    // single raster layer. Works for any pair of kinds.
+    mergeLayerDown: (id) => {
+      const s0 = get();
+      const idx = s0.design.layers.findIndex((l) => l.id === id);
+      if (idx <= 0) return; // nothing below to merge into
+      const below = s0.design.layers[idx - 1];
+      const top = s0.design.layers[idx];
+      const merged = compositeRange(s0.design, idx - 1, idx);
+      s0.pushHistory();
+      const nid = uid();
+      set((s) => {
+        const at = s.design.layers.findIndex((l) => l.id === id);
+        if (at <= 0) return {};
+        const layers = s.design.layers.slice();
+        layers.splice(at - 1, 2, {
+          id: nid,
+          kind: 'raster',
+          name: below.name,
+          visible: true,
+          data: merged,
+        });
+        const gone = (v: string | null) =>
+          v === id || v === below.id ? null : v;
+        return {
+          design: { ...s.design, layers },
+          activeLayer:
+            s.activeLayer === id || s.activeLayer === below.id
+              ? nid
+              : s.activeLayer,
+          selectedSelburoseId: gone(s.selectedSelburoseId),
+          editingSelburose: gone(s.editingSelburose),
+          selectedImageId: gone(s.selectedImageId),
+          editingImage: gone(s.editingImage),
+          selectedShapeId: gone(s.selectedShapeId),
+          editingShape: gone(s.editingShape),
+          dirty: true,
+        };
+      });
+      // release image bitmaps no longer referenced by any layer
+      const layersNow = get().design.layers;
+      for (const l of [below, top])
+        if (
+          l.kind === 'image' &&
+          !layersNow.some((x) => x.kind === 'image' && x.src === l.src)
+        )
+          revokeImage(l.src);
     },
 
     moveLayer: (id, dir) => {

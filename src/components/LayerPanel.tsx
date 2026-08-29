@@ -59,6 +59,11 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
 
   const onlyRaster = rasterCount(layers) <= 1;
 
+  // the "current" layer the footer actions target
+  const currentId =
+    selectedSelburoseId || selectedImageId || selectedShapeId || activeLayer;
+  const currentIdx = layers.findIndex((l) => l.id === currentId);
+
   const handleDrop = (targetId: string) => {
     if (!dragId || dragId === targetId) {
       setDragId(null);
@@ -102,14 +107,32 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="layer-panel dock-panel">
-      <button
-        className="btn grow"
-        onClick={s.addLayer}
-        aria-label="Add layer"
-        title="Add a new paintable layer"
-      >
-        <Icon name="plus" size={16} /> Layer
-      </button>
+      <div className="layer-actions">
+        <button
+          className="btn grow"
+          onClick={s.addLayer}
+          aria-label="Add layer"
+          title="Add a new paintable layer"
+        >
+          <Icon name="plus" size={16} /> Layer
+        </button>
+        <button
+          className="btn"
+          onClick={() => currentIdx >= 0 && s.duplicateLayer(currentId)}
+          disabled={currentIdx < 0}
+          title="Duplicate the current layer"
+        >
+          <Icon name="copy" size={16} /> Duplicate
+        </button>
+        <button
+          className="btn"
+          onClick={() => currentIdx > 0 && s.mergeLayerDown(currentId)}
+          disabled={currentIdx <= 0}
+          title="Merge the current layer into the one below it"
+        >
+          Merge ↓
+        </button>
+      </div>
 
       <div className="layer-list">
         {layers
