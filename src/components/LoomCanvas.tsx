@@ -210,6 +210,14 @@ export default function LoomCanvas() {
     y1: number;
     pts0: Array<[number, number]>; // poly vertices at gesture start
   }>(null);
+  // dragging the pixels inside a marquee/wand selection
+  const selMove = useRef<null | {
+    gx0: number;
+    gy0: number;
+    c0: number;
+    r0: number;
+    moved: boolean;
+  }>(null);
   const lastTap = useRef<null | { id: string; t: number }>(null);
   // memoised proposed palette for the edited image's preview
   const proposedRef = useRef<null | { key: string; hex: string[]; labs: Lab[] }>(
@@ -1052,6 +1060,26 @@ export default function LoomCanvas() {
           objDrag.current = { id: hit, gx0: g.cx, gy0: g.cy, ox: o.cx, oy: o.cy };
           return;
         }
+        // click inside an existing selection -> drag its pixels around
+        const curSel = S().selection;
+        if (
+          curSel &&
+          c >= curSel.c0 &&
+          c <= curSel.c1 &&
+          r >= curSel.r0 &&
+          r <= curSel.r1 &&
+          (!S().selectionMask ||
+            S().selectionMask!.has(r * d.loom.columns + c))
+        ) {
+          selMove.current = {
+            gx0: g.cx,
+            gy0: g.cy,
+            c0: curSel.c0,
+            r0: curSel.r0,
+            moved: false,
+          };
+          return;
+        }
         S().selectSelburose(null);
         S().selectShape(null);
         anchor.current = { c, r };
@@ -1231,6 +1259,23 @@ export default function LoomCanvas() {
       return;
     }
 
+    if (selMove.current) {
+      const sm = selMove.current;
+      const g = toCellF(e.clientX, e.clientY);
+      const sel = S().selection;
+      if (sel) {
+        const wantC0 = sm.c0 + Math.round(g.cx - sm.gx0);
+        const wantR0 = sm.r0 + Math.round(g.cy - sm.gy0);
+        const stepDx = wantC0 - sel.c0;
+        const stepDy = wantR0 - sel.r0;
+        if (stepDx || stepDy) {
+          S().moveSelection(stepDx, stepDy, sm.moved);
+          sm.moved = true;
+        }
+      }
+      return;
+    }
+
     if (shapeGesture.current) {
       const sg = shapeGesture.current;
       const g = toCellF(e.clientX, e.clientY);
@@ -1324,6 +1369,11 @@ export default function LoomCanvas() {
 
     if (shapeGesture.current) {
       shapeGesture.current = null;
+      return;
+    }
+
+    if (selMove.current) {
+      selMove.current = null;
       return;
     }
 

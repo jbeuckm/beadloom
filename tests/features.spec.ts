@@ -63,6 +63,12 @@ test('eraser clears painted cells back to empty', async ({ page }) => {
   await pickTool(page, 'Eraser');
   await dragCells(page, [1, 1], [8, 1]);
   expect(await cellValue(page, 4, 1)).toBe(-1);
+
+  // picking a palette colour while erasing switches back to the pen
+  await page.locator('.swatch').nth(4).click();
+  const s = await snapshot(page);
+  expect(s.tool).toBe('pen');
+  expect(s.activeColor).toBe(4);
 });
 
 test('undo and redo step through edits', async ({ page }) => {
@@ -75,6 +81,48 @@ test('undo and redo step through edits', async ({ page }) => {
 
   await page.keyboard.press('ControlOrMeta+Shift+z');
   expect((await snapshot(page)).beads).toBe(1);
+});
+
+test('a marquee selection can be translated with the arrow keys and by dragging', async ({
+  page,
+}) => {
+  await pickTool(page, 'Pen');
+  await page.locator('.swatch').nth(3).click();
+  await dragCells(page, [5, 5], [7, 5]); // 3-cell run of colour 3
+  expect((await snapshot(page)).beads).toBe(3);
+
+  await pickTool(page, 'Select');
+  await dragCells(page, [5, 5], [7, 5]);
+  expect((await snapshot(page)).selection).toMatchObject({
+    c0: 5,
+    r0: 5,
+    c1: 7,
+    r1: 5,
+  });
+
+  // nudge the pixels one cell right
+  await page.keyboard.press('ArrowRight');
+  let s = await snapshot(page);
+  expect(s.beads).toBe(3); // nothing lost
+  expect(await cellValue(page, 5, 5)).toBe(-1); // vacated
+  expect(await cellValue(page, 6, 5)).toBe(3);
+  expect(await cellValue(page, 8, 5)).toBe(3); // shifted in
+  expect(s.selection).toMatchObject({ c0: 6, c1: 8, r0: 5, r1: 5 });
+
+  // drag the selection down 3 rows from inside it
+  await dragCells(page, [7, 5], [7, 8]);
+  s = await snapshot(page);
+  expect(s.beads).toBe(3);
+  expect(await cellValue(page, 7, 5)).toBe(-1);
+  expect(await cellValue(page, 7, 8)).toBe(3);
+  expect(s.selection).toMatchObject({ r0: 8, r1: 8, c0: 6, c1: 8 });
+
+  // one undo reverts the whole drag; another reverts the arrow nudge
+  await page.keyboard.press('ControlOrMeta+z');
+  expect(await cellValue(page, 8, 5)).toBe(3);
+  await page.keyboard.press('ControlOrMeta+z');
+  expect(await cellValue(page, 5, 5)).toBe(3);
+  expect((await snapshot(page)).beads).toBe(3);
 });
 
 test('filled rectangle tool paints a solid block', async ({ page }) => {

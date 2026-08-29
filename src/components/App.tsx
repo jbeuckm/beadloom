@@ -96,13 +96,20 @@ export default function App() {
 
       if (
         k.startsWith('arrow') &&
-        (s.selectedSelburoseId || s.selectedImageId || s.selectedShapeId)
+        (s.selectedSelburoseId ||
+          s.selectedImageId ||
+          s.selectedShapeId ||
+          s.selection)
       ) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const dx = k === 'arrowleft' ? -step : k === 'arrowright' ? step : 0;
         const dy = k === 'arrowup' ? -step : k === 'arrowdown' ? step : 0;
-        if (dx || dy) s.nudgeSelected(dx, dy, e.repeat);
+        if (dx || dy) {
+          if (s.selectedSelburoseId || s.selectedImageId || s.selectedShapeId)
+            s.nudgeSelected(dx, dy, e.repeat);
+          else s.moveSelection(dx, dy, e.repeat);
+        }
         return;
       }
 

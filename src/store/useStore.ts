@@ -249,6 +249,9 @@ export interface StoreState {
   // region transforms (self-managed history)
   flip: (axis: 'h' | 'v', scope: 'all' | 'selection') => void;
   rotate180: (scope: 'all' | 'selection') => void;
+  // Translate the marquee/wand selection's pixels (and the selection itself) on
+  // the active raster layer by a cell delta. `coalesce` skips the history push.
+  moveSelection: (dx: number, dy: number, coalesce: boolean) => void;
 
   // layers (self-managed history)
   setActiveLayer: (id: string) => void;
@@ -861,6 +864,62 @@ export const useStore = create<StoreState>()(
       if (!s.selection) return;
       s.pushHistory();
       s.paintCells(selectionCells(s), EMPTY);
+    },
+
+    moveSelection: (dx, dy, coalesce) => {
+      const s0 = get();
+      const sel = s0.selection;
+      const data = activeRasterData(s0);
+      if (!sel || !data) return;
+      const { columns, rows } = s0.design.loom;
+      const mask = s0.selectionMask;
+      // keep the selection rectangle inside the grid
+      const cdx = Math.round(
+        clamp(dx, -sel.c0, columns - 1 - sel.c1),
+      );
+      const cdy = Math.round(
+        clamp(dy, -sel.r0, rows - 1 - sel.r1),
+      );
+      if (!cdx && !cdy) return;
+
+      // lift the selected pixels, then re-stamp them shifted (opaque cells only,
+      // so we don't punch holes over existing beads at the destination)
+      const lifted: Array<[number, number, number]> = [];
+      for (let r = sel.r0; r <= sel.r1; r++)
+        for (let c = sel.c0; c <= sel.c1; c++) {
+          if (mask && !mask.has(r * columns + c)) continue;
+          const v = data[r]?.[c] ?? EMPTY;
+          if (v >= 0) lifted.push([c, r, v]);
+        }
+      const next = data.map((row) => row.slice());
+      for (let r = sel.r0; r <= sel.r1; r++)
+        for (let c = sel.c0; c <= sel.c1; c++) {
+          if (mask && !mask.has(r * columns + c)) continue;
+          next[r][c] = EMPTY;
+        }
+      for (const [c, r, v] of lifted) next[r + cdy][c + cdx] = v;
+
+      const nextMask = mask
+        ? new Set(
+            [...mask].map((k) => {
+              const r = Math.floor(k / columns);
+              const c = k - r * columns;
+              return (r + cdy) * columns + (c + cdx);
+            }),
+          )
+        : null;
+
+      if (!coalesce) s0.pushHistory();
+      set((s) => ({
+        ...setActiveRaster(s, next),
+        selection: {
+          c0: sel.c0 + cdx,
+          r0: sel.r0 + cdy,
+          c1: sel.c1 + cdx,
+          r1: sel.r1 + cdy,
+        },
+        selectionMask: nextMask,
+      }));
     },
 
     pasteAt: (c, r) => {

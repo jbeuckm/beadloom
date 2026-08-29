@@ -75,6 +75,8 @@ export default function PalettePanel() {
                   if (s.selectedSelburoseId)
                     s.recolorSelburose(s.selectedSelburoseId, i);
                   if (s.selectedShapeId) s.recolorShape(s.selectedShapeId, i);
+                  // picking a colour means you want to paint, not erase
+                  if (s.tool === 'eraser') s.setTool('pen');
                 }}
                 title={`${c.name} — ${c.hex}${c.code ? ` · ${c.code}` : ''}`}
                 aria-label={`Use ${c.name}`}
