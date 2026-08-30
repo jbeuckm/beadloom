@@ -106,11 +106,8 @@ function SizeField({ axis }: { axis: 'columns' | 'rows' }) {
 
 function LoomSize() {
   const columns = useStore((s) => s.design.loom.columns);
-  const rows = useStore((s) => s.design.loom.rows);
-  const aspect = useStore((s) => s.design.loom.cellAspect);
   const inW = columns * IN_PER_COL;
-  const inH = rows * IN_PER_COL * aspect;
-  const fmt = (n: number) => (n < 9.95 ? n.toFixed(1) : Math.round(n).toString());
+  const est = inW < 9.95 ? inW.toFixed(1) : Math.round(inW).toString();
 
   return (
     <div className="dim-group">
@@ -122,9 +119,9 @@ function LoomSize() {
       <SizeField axis="rows" />
       <span
         className="dim-est"
-        title="Approximate finished size with 11/0 seed beads (about 74 columns per 6 in)"
+        title="Approximate length along the columns with 11/0 seed beads (about 74 columns per 6 in)"
       >
-        ≈ {fmt(inW)} × {fmt(inH)} in
+        ≈ {est} in
       </span>
     </div>
   );
