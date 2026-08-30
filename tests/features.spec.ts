@@ -416,9 +416,11 @@ test('print chart: a US-Letter sheet with the design, grid marks and an inch sca
   await expect(sheet).toBeVisible();
   await expect(sheet).toHaveAttribute('width', '7.5in');
   await expect(sheet).toHaveAttribute('height', '10in');
-  // beads rendered, grid-count marks present (row 40 total, columns numbered)
+  // beads rendered, grid-count marks present on both sides
   expect(await sheet.locator('rect').count()).toBeGreaterThan(5);
-  await expect(sheet.locator('text', { hasText: /^40$/ })).toBeVisible();
+  expect(
+    await sheet.locator('text').filter({ hasText: /^40$/ }).count(),
+  ).toBe(2); // the "40" column mark, left and right
   await expect(sheet).toContainText('nominal');
   expect(await page.evaluate(() => document.body.classList.contains('printing'))).toBe(
     true,
