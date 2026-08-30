@@ -126,8 +126,29 @@ textarea {
   letter-spacing: 0.04em;
   padding: 0 4px;
 }
+.dim-step {
+  width: 34px;
+  height: var(--tap);
+  flex: none;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+.dim-step:active {
+  background: var(--ink);
+  color: #fff;
+}
 .dim-value {
-  width: 46px;
+  width: 44px;
   height: var(--tap);
   padding: 0 4px;
   text-align: center;

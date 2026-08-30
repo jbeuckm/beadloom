@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../store/useStore';
 import Menu, { MenuItem } from './Menu';
 import { Icon } from './icons';
@@ -10,11 +11,49 @@ export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help';
 /** ~11/0 seed beads: 74 columns is about 6 inches, so one column ≈ this. */
 const IN_PER_COL = 6 / 74;
 
+/** Press-and-hold auto-repeat for the ± steppers, one history entry per hold. */
+function useHoldRepeat(step: () => void, onStart?: () => void) {
+  const timers = useRef<number[]>([]);
+  const stop = () => {
+    timers.current.forEach((t) => clearTimeout(t));
+    timers.current = [];
+  };
+  useEffect(() => stop, []);
+
+  const start = () => {
+    onStart?.();
+    step();
+    let delay = 300;
+    const tick = () => {
+      step();
+      delay = Math.max(28, delay * 0.8);
+      timers.current.push(window.setTimeout(tick, delay));
+    };
+    timers.current.push(window.setTimeout(tick, delay));
+  };
+
+  return {
+    onPointerDown: (e: ReactPointerEvent) => {
+      e.preventDefault();
+      start();
+    },
+    onPointerUp: stop,
+    onPointerLeave: stop,
+    onPointerCancel: stop,
+  };
+}
+
 function SizeField({ axis }: { axis: 'columns' | 'rows' }) {
   const value = useStore((s) => s.design.loom[axis]);
   const apply = useStore((s) => (axis === 'columns' ? s.setColumns : s.setRows));
   const pushHistory = useStore((s) => s.pushHistory);
   const [draft, setDraft] = useState<string | null>(null);
+  const noun = axis === 'columns' ? 'columns' : 'rows';
+
+  const bump = (d: number) =>
+    apply(useStore.getState().design.loom[axis] + d);
+  const dec = useHoldRepeat(() => bump(-1), pushHistory);
+  const inc = useHoldRepeat(() => bump(1), pushHistory);
 
   const commit = () => {
     if (draft === null) return;
@@ -27,23 +66,41 @@ function SizeField({ axis }: { axis: 'columns' | 'rows' }) {
   };
 
   return (
-    <input
-      className="dim-value"
-      type="text"
-      inputMode="numeric"
-      pattern="[0-9]*"
-      value={draft ?? String(value)}
-      aria-label={axis === 'columns' ? 'Column count' : 'Row count'}
-      onFocus={(e) => {
-        setDraft(String(value));
-        e.currentTarget.select();
-      }}
-      onChange={(e) => setDraft(e.target.value.replace(/\D/g, '').slice(0, 4))}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-      }}
-    />
+    <>
+      <button
+        className="dim-step"
+        title={`Fewer ${noun}`}
+        aria-label={`Fewer ${noun}`}
+        {...dec}
+      >
+        −
+      </button>
+      <input
+        className="dim-value"
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        value={draft ?? String(value)}
+        aria-label={axis === 'columns' ? 'Column count' : 'Row count'}
+        onFocus={(e) => {
+          setDraft(String(value));
+          e.currentTarget.select();
+        }}
+        onChange={(e) => setDraft(e.target.value.replace(/\D/g, '').slice(0, 4))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        }}
+      />
+      <button
+        className="dim-step"
+        title={`More ${noun}`}
+        aria-label={`More ${noun}`}
+        {...inc}
+      >
+        +
+      </button>
+    </>
   );
 }
 
