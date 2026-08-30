@@ -204,6 +204,9 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
             <MenuItem onClick={() => exportPNG(s.design)} close={close}>
               ⊡ Export Image (.png)
             </MenuItem>
+            <MenuItem onClick={() => s.setShowPrint(true)} close={close}>
+              ⎙ Print Chart…
+            </MenuItem>
             <div className="menu-sep" />
             <MenuItem onClick={() => onDialog('resize')} close={close}>
               ◆ Resize Grid…

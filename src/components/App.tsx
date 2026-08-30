@@ -6,12 +6,14 @@ import PalettePanel from './PalettePanel';
 import StatusBar from './StatusBar';
 import Dialogs from './Dialogs';
 import RightDock from './RightDock';
+import PrintView from './PrintView';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
 
 export default function App() {
   const [dialog, setDialog] = useState<DialogId | null>(null);
   const rightPanel = useStore((s) => s.rightPanel);
+  const showPrint = useStore((s) => s.showPrint);
 
   useEffect(() => {
     const isTyping = (t: EventTarget | null) => {
@@ -148,6 +150,7 @@ export default function App() {
       <PalettePanel />
       <StatusBar />
       {dialog && <Dialogs which={dialog} onClose={() => setDialog(null)} />}
+      {showPrint && <PrintView />}
     </div>
   );
 }

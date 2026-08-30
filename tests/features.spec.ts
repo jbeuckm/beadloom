@@ -400,3 +400,33 @@ test('help dialog documents the custom file format', async ({ page }) => {
   await expect(modal).toContainText('rows-index');
   await expect(modal).toContainText('cellAspect');
 });
+
+test('print chart: a US-Letter sheet with the design, grid marks and an inch scale', async ({
+  page,
+}) => {
+  await page.getByLabel('Column count').fill('40');
+  await page.getByLabel('Column count').blur();
+  await page.getByLabel('Row count').fill('16');
+  await page.getByLabel('Row count').blur();
+  await pickTool(page, 'Pen');
+  await dragCells(page, [3, 3], [3, 12]);
+
+  await openFileMenu(page, /Print Chart/);
+  const sheet = page.locator('.print-sheet');
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toHaveAttribute('width', '7.5in');
+  await expect(sheet).toHaveAttribute('height', '10in');
+  // beads rendered, grid-count marks present (row 40 total, columns numbered)
+  expect(await sheet.locator('rect').count()).toBeGreaterThan(5);
+  await expect(sheet.locator('text', { hasText: /^40$/ })).toBeVisible();
+  await expect(sheet).toContainText('nominal');
+  expect(await page.evaluate(() => document.body.classList.contains('printing'))).toBe(
+    true,
+  );
+
+  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(page.locator('.print-sheet')).toHaveCount(0);
+  expect(await page.evaluate(() => document.body.classList.contains('printing'))).toBe(
+    false,
+  );
+});

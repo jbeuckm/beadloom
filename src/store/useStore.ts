@@ -183,6 +183,7 @@ export interface StoreState {
   editingShape: string | null; // id of the line/box the Shape panel edits
   lineThickness: number; // default bead width for new line / box-outline shapes
   rightPanel: RightPanelId | null; // the panel docked to the right edge
+  showPrint: boolean; // the printable-sheet overlay is open
   highlightRow: number | null;
   cursor: { c: number; r: number } | null;
   settings: Settings;
@@ -208,6 +209,7 @@ export interface StoreState {
   selectAll: () => void;
   selectWand: (c: number, r: number) => void;
   setHighlightRow: (r: number | null) => void;
+  setShowPrint: (v: boolean) => void;
 
   // painting — callers push history once at the start of a stroke
   paintCells: (cells: Array<[number, number]>, value: number) => void;
@@ -428,6 +430,7 @@ export const useStore = create<StoreState>()(
     editingShape: null,
     lineThickness: 1,
     rightPanel: null,
+    showPrint: false,
     highlightRow: null,
     cursor: null,
     settings: initialSettings,
@@ -532,6 +535,7 @@ export const useStore = create<StoreState>()(
       }),
 
     setHighlightRow: (r) => set({ highlightRow: r }),
+    setShowPrint: (v) => set({ showPrint: v }),
 
     paintCells: (cells, value) =>
       set((s) => {
