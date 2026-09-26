@@ -76,6 +76,7 @@ export async function snapshot(page: Page) {
           contrast: l.contrast,
           brightness: l.brightness,
           warmth: l.warmth,
+          equalize: l.equalize,
           paletteMode: l.paletteMode,
           paletteColors: l.paletteColors,
           coveredOnly: l.coveredOnly,

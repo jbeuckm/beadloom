@@ -417,6 +417,7 @@ export default function LoomCanvas() {
             edited.contrast,
             edited.brightness,
             edited.warmth,
+            edited.equalize,
           ].join('|');
           if (!proposedRef.current || proposedRef.current.key !== key) {
             const smp = imageSamples(edited.src).map((c) => adjustRgb(c, edited));

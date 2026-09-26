@@ -30,6 +30,7 @@ function signature(design: BeadDesign, l: ImageLayer): string {
     l.contrast,
     l.brightness,
     l.warmth,
+    l.equalize,
     l.coveredOnly ? 1 : 0,
     columns,
     rows,

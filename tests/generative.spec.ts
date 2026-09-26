@@ -483,6 +483,14 @@ test('Image layer: on-canvas transform, palette extract, then flatten', async ({
   s = await snapshot(page);
   expect(s.imageLayers[0].contrast).toBeCloseTo(0.4);
   expect(s.rasterBeads).toBe(0);
+  expect(s.imageLayers[0].equalize).toBe(0);
+  await panel
+    .locator('.field', { hasText: 'Equalize' })
+    .locator('input[type=range]')
+    .fill('75');
+  s = await snapshot(page);
+  expect(s.imageLayers[0].equalize).toBeCloseTo(0.75);
+  expect(s.rasterBeads).toBe(0);
 
   // --- palette from image: the "Colours" count is stored on the layer so the
   //     canvas preview tracks it; add proposed colours, then replace ---

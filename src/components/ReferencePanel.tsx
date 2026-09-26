@@ -52,6 +52,7 @@ export default function ReferencePanel({ onClose: _onClose }: { onClose: () => v
         contrast: 0,
         brightness: 0,
         warmth: 0,
+        equalize: 0,
         paletteMode: 'current',
         paletteColors: 10,
         coveredOnly: true,
@@ -162,6 +163,16 @@ export default function ReferencePanel({ onClose: _onClose }: { onClose: () => v
           max={100}
           value={Math.round(layer.warmth * 100)}
           onChange={(e) => edit({ warmth: Number(e.target.value) / 100 })}
+        />
+      </div>
+      <div className="field">
+        <label>Equalize — {Math.round((layer.equalize ?? 0) * 100)}</label>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={Math.round((layer.equalize ?? 0) * 100)}
+          onChange={(e) => edit({ equalize: Number(e.target.value) / 100 })}
         />
       </div>
 

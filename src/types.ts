@@ -93,6 +93,7 @@ export interface ImageLayer {
   contrast: number; // -1..1, applied before sampling/tracing
   brightness: number; // -1..1
   warmth: number; // -1..1 (red ↔ blue balance)
+  equalize: number; // 0..1 blend toward a histogram-equalised tonal range
   paletteMode: 'proposed' | 'current'; // trace against image-derived colours, or the current palette
   paletteColors: number; // N colours to lift from the image (proposed mode)
   coveredOnly: boolean; // flatten only the cells the image actually covers

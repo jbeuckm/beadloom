@@ -6,6 +6,7 @@ interface Entry {
   img: HTMLImageElement | null;
   pixels: ImageData | null;
   loading: boolean;
+  eqLut?: Float32Array | null; // luma → equalised luma, built on first use
 }
 
 const cache = new Map<string, Entry>();
@@ -116,4 +117,34 @@ export function imageSamples(
     out.push([d[o], d[o + 1], d[o + 2]]);
   }
   return out;
+}
+
+/**
+ * Histogram-equalisation lookup for an image: index by luma (0..255), get the
+ * luma that value maps to when the opaque pixels' tones are spread evenly.
+ * Null until the bitmap has decoded.
+ */
+export function lumaEqualizer(src: string): Float32Array | null {
+  const e = cache.get(src);
+  if (!e?.pixels) return null;
+  if (e.eqLut) return e.eqLut;
+  const d = e.pixels.data;
+  const hist = new Uint32Array(256);
+  let total = 0;
+  for (let o = 0; o < d.length; o += 4) {
+    if (d[o + 3] < 16) continue;
+    hist[Math.round(0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2])]++;
+    total++;
+  }
+  const lut = new Float32Array(256);
+  let cdf = 0;
+  let cdfMin = -1;
+  for (let v = 0; v < 256; v++) {
+    cdf += hist[v];
+    if (cdfMin < 0 && cdf > 0) cdfMin = cdf;
+    const span = total - cdfMin;
+    lut[v] = span > 0 ? (Math.max(0, cdf - cdfMin) / span) * 255 : v;
+  }
+  e.eqLut = lut;
+  return lut;
 }

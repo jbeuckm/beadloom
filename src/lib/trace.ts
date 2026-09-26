@@ -3,15 +3,34 @@
 
 import type { ImageLayer } from '../types';
 import { nearestIndex, type Lab } from './color';
-import { sampleImage } from './referenceImage';
+import { lumaEqualizer, sampleImage } from './referenceImage';
 
 const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
 
-/** Contrast / brightness / warmth adjustment applied before palette matching. */
+/**
+ * Equalize / contrast / brightness / warmth adjustment applied before palette
+ * matching. Equalize shifts each pixel's luma toward its histogram-equalised
+ * value for `adj.src`, spreading the image's tones across the full range.
+ */
 export function adjustRgb(
   [r, g, b]: [number, number, number],
-  adj: { contrast: number; brightness: number; warmth: number },
+  adj: {
+    contrast: number;
+    brightness: number;
+    warmth: number;
+    equalize?: number;
+    src?: string;
+  },
 ): [number, number, number] {
+  const eq = adj.equalize || 0;
+  const lut = eq > 0 && adj.src ? lumaEqualizer(adj.src) : null;
+  if (lut) {
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    const shift = (lut[Math.round(y)] - y) * eq;
+    r = clamp255(r + shift);
+    g = clamp255(g + shift);
+    b = clamp255(b + shift);
+  }
   const cf = 1 + (adj.contrast || 0); // slope about mid-grey
   const add = (adj.brightness || 0) * 255;
   const w = (adj.warmth || 0) * 60;
