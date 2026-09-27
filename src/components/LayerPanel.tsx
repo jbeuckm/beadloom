@@ -83,6 +83,10 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
   };
 
   const rowClick = (l: Layer) => {
+    if (l.locked) {
+      s.notify(`“${l.name}” is locked`);
+      return;
+    }
     if (l.kind === 'raster') s.setActiveLayer(l.id);
     else if (l.kind === 'selburose') s.selectSelburose(l.id);
     else if (l.kind === 'shape') {
@@ -127,7 +131,9 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
         <button
           className="btn mini"
           onClick={() => currentIdx > 0 && s.mergeLayerDown(currentId)}
-          disabled={currentIdx <= 0}
+          disabled={
+            currentIdx <= 0 || !!layers[currentIdx]?.locked || !!layers[currentIdx - 1]?.locked
+          }
           title="Merge the current layer into the one below it"
         >
           Merge ↓
@@ -152,6 +158,7 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
                   (active ? ' active' : '') +
                   (picked ? ' picked' : '') +
                   (l.visible ? '' : ' hidden') +
+                  (l.locked ? ' locked' : '') +
                   (dragId === l.id ? ' dragging' : '')
                 }
                 draggable={renaming !== l.id}
@@ -215,8 +222,20 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
                   </span>
                 )}
                 <button
+                  className="layer-lock"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    s.toggleLayerLocked(l.id);
+                  }}
+                  title={l.locked ? 'Unlock layer' : 'Lock layer — no selecting or editing'}
+                  aria-label={l.locked ? 'Unlock layer' : 'Lock layer'}
+                  aria-pressed={!!l.locked}
+                >
+                  <Icon name={l.locked ? 'lock' : 'unlock'} size={15} />
+                </button>
+                <button
                   className="layer-del"
-                  disabled={l.kind === 'raster' && onlyRaster}
+                  disabled={(l.kind === 'raster' && onlyRaster) || !!l.locked}
                   onClick={(e) => {
                     e.stopPropagation();
                     s.removeLayer(l.id);

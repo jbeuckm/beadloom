@@ -38,6 +38,8 @@ export type IconName =
   | 'x'
   | 'folder'
   | 'check'
+  | 'lock'
+  | 'unlock'
   | 'folder-plus'
   | 'list'
   | 'search'
@@ -235,6 +237,18 @@ const PATHS: Record<IconName, ReactNode> = {
   'chevron-down': <path d="m6 9 6 6 6-6" />,
   'chevron-left': <path d="m15 18-6-6 6-6" />,
   check: <path d="M20 6 9 17l-5-5" />,
+  lock: (
+    <>
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </>
+  ),
+  unlock: (
+    <>
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 7.6-1.7" />
+    </>
+  ),
   'chevron-right': <path d="m9 18 6-6-6-6" />,
   'folder-plus': (
     <>

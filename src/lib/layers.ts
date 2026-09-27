@@ -75,9 +75,15 @@ export function selburoseLayerCells(
   );
 }
 
-/** Flatten every visible layer into one grid; higher non-empty cells win. */
+/** Flatten every visible layer into one grid; higher non-empty cells win, and
+ *  the design's background colour (if set) fills every position left empty. */
 export function compositeLayers(design: BeadDesign): number[][] {
-  return compositeRange(design, 0, design.layers.length - 1);
+  const out = compositeRange(design, 0, design.layers.length - 1);
+  const bg = design.backgroundColor;
+  if (bg != null && bg >= 0 && bg < design.palette.colors.length)
+    for (const row of out)
+      for (let c = 0; c < row.length; c++) if (row[c] < 0) row[c] = bg;
+  return out;
 }
 
 /**

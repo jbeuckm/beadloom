@@ -48,11 +48,13 @@ export const FILE_FORMAT_SPEC = `{
   },
 
   "background": "#FFFFFF",          // painted behind empty cells
+  "backgroundColor": 5,             // optional palette index filling every empty cell
 
   // The layer stack, bottom -> top. Composited for display and export.
   "layers": [
     {
       "id": "l1", "kind": "raster", "name": "Layer 1", "visible": true,
+      "locked": false,             // optional: true = no selecting or editing
       "data": [
         [ 0, 0, 1, -1, 2, ... ],    // row 1, length === loom.columns
         [ 2, 2, 2, -1, -1, ... ]    // ...loom.rows arrays total; -1 = no bead

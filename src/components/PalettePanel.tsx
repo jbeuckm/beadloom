@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import ColorDialog from './ColorDialog';
+import BackgroundDialog from './BackgroundDialog';
 import PaletteLibrary from './PaletteLibrary';
 import { Icon } from './icons';
 import { colorUsage } from '../lib/grid';
@@ -14,6 +15,7 @@ export default function PalettePanel() {
   const [editing, setEditing] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [bgOpen, setBgOpen] = useState(false);
   const [draggedColor, setDraggedColor] = useState<string | null>(null);
 
   const palette = s.design.palette;
@@ -88,6 +90,11 @@ export default function PalettePanel() {
                 aria-pressed={selected}
               >
                 {s.settings.showUsage && n > 0 && <span className="count">{n}</span>}
+                {s.design.backgroundColor === i && (
+                  <span className="bg-badge" title="Background colour">
+                    BG
+                  </span>
+                )}
               </button>
               <div
                 className="swatch-meta"
@@ -155,20 +162,33 @@ export default function PalettePanel() {
           <Icon name="swatches" size={16} /> Palettes
         </button>
 
-        <div className="bg-row">
-          <input
-            type="color"
-            value={s.design.background}
-            onChange={(e) => s.setBackground(e.target.value)}
-            aria-label="Background colour"
-            title="Background colour of empty cells"
-          />
-          <span className="hint">Bg</span>
-        </div>
+        {(() => {
+          const bg = s.design.backgroundColor ?? null;
+          const bc = bg != null ? palette.colors[bg] : undefined;
+          return (
+            <button
+              className="btn bg-btn"
+              onClick={() => setBgOpen(true)}
+              title={
+                bc
+                  ? `Background: ${bc.name} fills every empty position`
+                  : 'Background: empty positions are left empty'
+              }
+              aria-label="Background"
+            >
+              <span
+                className={'bg-chip' + (bc ? '' : ' none')}
+                style={bc ? { background: bc.hex } : undefined}
+              />
+              Background
+            </button>
+          );
+        })()}
       </footer>
 
       {editing && <ColorDialog id={editing} onClose={() => setEditing(null)} />}
       {adding && <ColorDialog onClose={() => setAdding(false)} />}
+      {bgOpen && <BackgroundDialog onClose={() => setBgOpen(false)} />}
       {libraryOpen && <PaletteLibrary onClose={() => setLibraryOpen(false)} />}
     </div>
   );

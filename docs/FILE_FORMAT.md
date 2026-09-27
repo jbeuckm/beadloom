@@ -46,11 +46,13 @@ Two JSON formats, both plain UTF-8 text and safe to hand-edit.
   },
 
   "background": "#FFFFFF",   // drawn behind every empty cell
+  "backgroundColor": 5,      // optional: palette index that fills every empty cell (a real bead)
 
   // The layer stack, bottom → top. Composited for display and export.
   "layers": [
     {
       "id": "l1", "kind": "raster", "name": "Layer 1", "visible": true,
+      "locked": false,           // optional: true = no selecting or editing
       "data": [
         [ 0, 0, 2, 2, -1, 3, 3, … ],  // row 1 — exactly loom.columns entries
         [ 0, 2, 2, 3, -1, -1, 3, … ], // …loom.rows rows; -1 = transparent

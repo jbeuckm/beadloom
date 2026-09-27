@@ -50,7 +50,19 @@ import {
 import { clamp, normalizeHex, uid } from '../util';
 import * as storage from '../lib/storage';
 
+export type WandMode = 'new' | 'add' | 'subtract';
+
 const HISTORY_LIMIT = 60;
+
+/** Follow a palette renumbering; a background colour that's removed goes away. */
+const remapBackground = (
+  bg: number | null | undefined,
+  remap: (v: number) => number,
+): number | null => {
+  if (bg == null) return null;
+  const v = remap(bg);
+  return v >= 0 ? v : null;
+};
 const MIN_ZOOM = 0.15;
 const MAX_ZOOM = 14;
 
@@ -100,11 +112,40 @@ const setActiveRaster = (s: StoreState, next: number[][]): Partial<StoreState> =
   const i = activeRasterIdx(s);
   if (i < 0) return {};
   const cur = s.design.layers[i] as RasterLayer;
-  if (next === cur.data) return {};
+  if (next === cur.data || cur.locked) return {};
   const layers = s.design.layers.slice();
   layers[i] = { ...cur, data: next };
   return { design: { ...s.design, layers }, dirty: true };
 };
+
+const layerById = (s: StoreState, id: string | null | undefined) =>
+  id ? s.design.layers.find((l) => l.id === id) : undefined;
+
+/** True (after saying so) when `id` names a locked layer — callers bail out. */
+const refuseLocked = (get: () => StoreState, id: string | null | undefined): boolean => {
+  const s = get();
+  const l = layerById(s, id);
+  if (!l?.locked) return false;
+  s.notify(`“${l.name}” is locked`);
+  return true;
+};
+
+/** Refuse an edit to the active drawing layer when it's locked. */
+const activeLocked = (get: () => StoreState): boolean => refuseLocked(get, get().activeLayer);
+
+/** The selection's cells read out of `grid`, with unselected wand cells emptied. */
+function maskedStamp(s: StoreState, grid: number[][]): Stamp {
+  const stamp = readStamp(grid, s.selection!);
+  const mask = s.selectionMask;
+  if (mask) {
+    const { c0, r0 } = s.selection!;
+    const cols = s.design.loom.columns;
+    for (let y = 0; y < stamp.h; y++)
+      for (let x = 0; x < stamp.w; x++)
+        if (!mask.has((r0 + y) * cols + (c0 + x))) stamp.data[y][x] = EMPTY;
+  }
+  return stamp;
+}
 
 /** The cells a selection covers — the wand mask if present, else the whole rect. */
 const selectionCells = (s: StoreState): Array<[number, number]> => {
@@ -211,7 +252,10 @@ export interface StoreState {
   setCursor: (c: { c: number; r: number } | null) => void;
   setSelection: (r: Rect | null) => void;
   selectAll: () => void;
-  selectWand: (c: number, r: number) => void;
+  /** Magic wand: replace the selection, or add / subtract a region (Shift / Option). */
+  selectWand: (c: number, r: number, mode?: WandMode) => void;
+  wandMode: WandMode; // the wand's default when no modifier key is held
+  setWandMode: (m: WandMode) => void;
   setWorkColumn: (c: number | null) => void;
   /** Step the working column by `d`, staying on the grid. */
   stepWorkColumn: (d: number) => void;
@@ -246,6 +290,12 @@ export interface StoreState {
 
   // clipboard (self-managed history)
   starClipboard: SelburoseObject | null; // a copied selburose, ready to paste
+  shapeClipboard: ShapeObject | null; // a copied line / box / polygon, ready to paste
+  notice: { text: string; id: number } | null; // brief status message (copied…, nothing to paste)
+  notify: (text: string) => void;
+  /** ⌘V: drop a copied object straight away, or enter paste mode for cells. */
+  paste: () => void;
+  pasteShape: () => void;
   copySelection: () => void;
   cutSelection: () => void;
   deleteSelection: () => void;
@@ -272,6 +322,10 @@ export interface StoreState {
   reorderLayers: (ordered: Layer[]) => void;
   renameLayer: (id: string, name: string) => void;
   toggleLayerVisible: (id: string) => void;
+  /** Lock / unlock a layer: locked layers can't be selected or edited. */
+  toggleLayerLocked: (id: string) => void;
+  /** True (after saying so) when the active drawing layer is locked. */
+  guardActiveEdit: () => boolean;
 
   // right-edge dock
   setRightPanel: (p: RightPanelId | null) => void;
@@ -318,6 +372,8 @@ export interface StoreState {
   setName: (s: string) => void;
   setNotes: (s: string) => void;
   setBackground: (hex: string) => void;
+  /** Fill every empty position with a palette colour (null: leave them empty). */
+  setBackgroundColor: (index: number | null) => void;
   setPaletteName: (s: string) => void;
   /** Append colours (e.g. picked from a maker library) as one undo step. */
   addColors: (colors: Array<{ name: string; hex: string; code?: string }>) => void;
@@ -366,6 +422,7 @@ const snap = (s: StoreState): Snapshot => ({
   loom: structuredClone(s.design.loom),
   palette: structuredClone(s.design.palette),
   background: s.design.background,
+  backgroundColor: s.design.backgroundColor ?? null,
   layers: structuredClone(s.design.layers),
   activeLayer: s.activeLayer,
   activeColor: s.activeColor,
@@ -384,6 +441,7 @@ const applySnap = (s: StoreState, snp: Snapshot): Partial<StoreState> => {
       loom: structuredClone(snp.loom),
       palette: structuredClone(snp.palette),
       background: snp.background,
+      backgroundColor: snp.backgroundColor,
       layers,
     },
     activeLayer,
@@ -436,9 +494,12 @@ export const useStore = create<StoreState>()(
     pasteMode: false,
     selection: null,
     selectionMask: null,
+    wandMode: 'new',
     lifeLayerId: null,
     clipboard: null,
     starClipboard: null,
+    shapeClipboard: null,
+    notice: null,
     selectedSelburoseId: null,
     editingSelburose: null,
     selectedImageId: null,
@@ -526,30 +587,53 @@ export const useStore = create<StoreState>()(
         },
       })),
 
-    // Magic wand: flood a contiguous same-value region on the composited view.
-    selectWand: (c, r) =>
+    setWandMode: (m) => set({ wandMode: m }),
+
+    // Magic wand: flood a contiguous same-value region on the composited view,
+    // then replace the selection with it, or add it / take it away.
+    selectWand: (c, r, mode) =>
       set((s) => {
         const { columns: cols, rows } = s.design.loom;
         if (c < 0 || r < 0 || c >= cols || r >= rows) return {};
+        const how = mode ?? s.wandMode;
         const grid = compositeLayers(s.design);
         const target = grid[r][c];
-        const mask = new Set<number>();
+        const region = new Set<number>();
         const stack: Array<[number, number]> = [[c, r]];
-        let c0 = c;
-        let c1 = c;
-        let r0 = r;
-        let r1 = r;
         while (stack.length) {
           const [x, y] = stack.pop()!;
           if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
           const key = y * cols + x;
-          if (mask.has(key) || grid[y][x] !== target) continue;
-          mask.add(key);
+          if (region.has(key) || grid[y][x] !== target) continue;
+          region.add(key);
+          stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+        }
+
+        // what's selected now, as cell keys (a marquee counts as its rect)
+        const current = new Set<number>();
+        if (how !== 'new' && s.selection)
+          for (const [x, y] of selectionCells(s)) current.add(y * cols + x);
+        let mask: Set<number>;
+        if (how === 'add') {
+          mask = current;
+          for (const k of region) mask.add(k);
+        } else if (how === 'subtract') {
+          mask = current;
+          for (const k of region) mask.delete(k);
+        } else mask = region;
+
+        if (!mask.size) return { tool: 'wand', selection: null, selectionMask: null };
+        let c0 = cols;
+        let c1 = -1;
+        let r0 = rows;
+        let r1 = -1;
+        for (const k of mask) {
+          const x = k % cols;
+          const y = (k - x) / cols;
           if (x < c0) c0 = x;
           if (x > c1) c1 = x;
           if (y < r0) r0 = y;
           if (y > r1) r1 = y;
-          stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
         }
         return { tool: 'wand', selection: { c0, r0, c1, r1 }, selectionMask: mask };
       }),
@@ -586,9 +670,11 @@ export const useStore = create<StoreState>()(
       }),
 
     paintLine: (c0, r0, c1, r1, value) =>
+      activeLocked(get) ||
       get().paintCells([...linePoints(c0, r0, c1, r1)], value),
 
     paintRect: (rect, value, filled) => {
+      if (activeLocked(get)) return;
       const pts: Array<[number, number]> = [];
       for (let y = rect.r0; y <= rect.r1; y++)
         for (let x = rect.c0; x <= rect.c1; x++)
@@ -604,6 +690,7 @@ export const useStore = create<StoreState>()(
     },
 
     bucketFill: (c, r) =>
+      activeLocked(get) ||
       set((s) => {
         const data = activeRasterData(s);
         if (!data) return {};
@@ -780,6 +867,7 @@ export const useStore = create<StoreState>()(
       })),
 
     selectImage: (id) =>
+      refuseLocked(get, id) ||
       set((s) =>
         s.design.layers.some((l) => l.id === id && l.kind === 'image')
           ? {
@@ -858,41 +946,118 @@ export const useStore = create<StoreState>()(
       });
     },
 
-    copySelection: () =>
-      set((s) => {
-        if (s.selectedSelburoseId) {
-          const star = findStar(s, s.selectedSelburoseId);
-          return star ? { starClipboard: { ...star }, clipboard: null } : {};
-        }
-        if (!s.selection) return {};
-        const stamp = readStamp(activeRasterData(s) ?? [], s.selection);
-        const mask = s.selectionMask;
-        if (mask) {
-          const { c0, r0 } = s.selection;
-          const cols = s.design.loom.columns;
-          for (let y = 0; y < stamp.h; y++)
-            for (let x = 0; x < stamp.w; x++)
-              if (!mask.has((r0 + y) * cols + (c0 + x))) stamp.data[y][x] = EMPTY;
-        }
-        return { clipboard: stamp, starClipboard: null };
-      }),
+    notify: (text) => set((s) => ({ notice: { text, id: (s.notice?.id ?? 0) + 1 } })),
 
+    // ⌘C copies what you see: every visible layer merged (not the background
+    // fill, so empty cells stay transparent when pasted).
+    copySelection: () => {
+      const s = get();
+      if (s.selectedSelburoseId) {
+        const star = findStar(s, s.selectedSelburoseId);
+        if (star) {
+          set({ starClipboard: { ...star }, shapeClipboard: null, clipboard: null });
+          s.notify('Copied star');
+        }
+        return;
+      }
+      if (s.selectedShapeId) {
+        const sh = findShape(s, s.selectedShapeId);
+        if (sh) {
+          set({ shapeClipboard: structuredClone(sh), starClipboard: null, clipboard: null });
+          s.notify(`Copied ${sh.kind === 'poly' ? 'polygon' : sh.kind}`);
+        }
+        return;
+      }
+      if (!s.selection) {
+        s.notify('Select beads or an object to copy');
+        return;
+      }
+      const merged = compositeRange(s.design, 0, s.design.layers.length - 1);
+      const stamp = maskedStamp(s, merged);
+      const n = stamp.data.flat().filter((v) => v >= 0).length;
+      if (!n) {
+        s.notify('Nothing to copy — the selection is empty');
+        return;
+      }
+      set({ clipboard: stamp, starClipboard: null, shapeClipboard: null });
+      s.notify(`Copied ${n} bead${n === 1 ? '' : 's'}`);
+    },
+
+    // ⌘X cuts from the active drawing layer — the only beads it can remove.
     cutSelection: () => {
       const s = get();
       if (s.selectedSelburoseId) {
         const star = findStar(s, s.selectedSelburoseId);
         if (!star) return;
-        set({ starClipboard: { ...star }, clipboard: null });
+        set({ starClipboard: { ...star }, shapeClipboard: null, clipboard: null });
         s.removeSelburose(s.selectedSelburoseId); // self-manages history
+        s.notify('Cut star');
         return;
       }
-      if (!s.selection) return;
+      if (s.selectedShapeId) {
+        const sh = findShape(s, s.selectedShapeId);
+        if (!sh) return;
+        set({ shapeClipboard: structuredClone(sh), starClipboard: null, clipboard: null });
+        s.removeShape(s.selectedShapeId);
+        s.notify(`Cut ${sh.kind === 'poly' ? 'polygon' : sh.kind}`);
+        return;
+      }
+      if (!s.selection) {
+        s.notify('Select beads or an object to cut');
+        return;
+      }
+      if (activeLocked(get)) return;
+      const stamp = maskedStamp(s, activeRasterData(s) ?? []);
+      const n = stamp.data.flat().filter((v) => v >= 0).length;
+      if (!n) {
+        s.notify('Nothing to cut on this layer');
+        return;
+      }
       s.pushHistory();
-      s.copySelection();
+      set({ clipboard: stamp, starClipboard: null, shapeClipboard: null });
       s.paintCells(selectionCells(s), EMPTY);
+      s.notify(`Cut ${n} bead${n === 1 ? '' : 's'}`);
+    },
+
+    paste: () => {
+      const s = get();
+      if (s.starClipboard) s.pasteStar();
+      else if (s.shapeClipboard) s.pasteShape();
+      else if (s.clipboard) s.setPasteMode(true);
+      else s.notify('Nothing to paste — copy something first');
+    },
+
+    // Drop a copy of the copied shape a little down-right of the original, on
+    // its own layer, selected. Repeated pastes keep stepping along.
+    pasteShape: () => {
+      const s0 = get();
+      const tmpl = s0.shapeClipboard;
+      if (!tmpl) return;
+      const { columns, rows } = s0.design.loom;
+      const xs = tmpl.kind === 'poly' ? tmpl.points.map((p) => p[0]) : [tmpl.x0, tmpl.x1];
+      const ys = tmpl.kind === 'poly' ? tmpl.points.map((p) => p[1]) : [tmpl.y0, tmpl.y1];
+      // step 2 beads, but not off the grid
+      const dx = clamp(2, -Math.min(...xs), columns - 1 - Math.max(...xs));
+      const dy = clamp(2, -Math.min(...ys), rows - 1 - Math.max(...ys));
+      const moved = {
+        ...structuredClone(tmpl),
+        x0: tmpl.x0 + dx,
+        y0: tmpl.y0 + dy,
+        x1: tmpl.x1 + dx,
+        y1: tmpl.y1 + dy,
+        points: tmpl.points.map(([x, y]) => [x + dx, y + dy] as [number, number]),
+      };
+      const { id: _id, ...rest } = moved;
+      s0.addShape(rest);
+      const placed = findShape(get(), get().selectedShapeId ?? '');
+      set({
+        tool: 'select',
+        shapeClipboard: placed ? structuredClone(placed) : moved,
+      });
     },
 
     deleteSelection: () => {
+      if (activeLocked(get)) return;
       const s = get();
       if (!s.selection) return;
       s.pushHistory();
@@ -900,6 +1065,7 @@ export const useStore = create<StoreState>()(
     },
 
     moveSelection: (dx, dy, coalesce) => {
+      if (activeLocked(get)) return;
       const s0 = get();
       const sel = s0.selection;
       const data = activeRasterData(s0);
@@ -956,6 +1122,7 @@ export const useStore = create<StoreState>()(
     },
 
     pasteAt: (c, r) => {
+      if (activeLocked(get)) return;
       const st = get().clipboard;
       if (!st) return;
       get().pushHistory();
@@ -1061,6 +1228,7 @@ export const useStore = create<StoreState>()(
     },
 
     flip: (axis, scope) => {
+      if (activeLocked(get)) return;
       get().pushHistory();
       set((s) => {
         const src = activeRasterData(s);
@@ -1084,6 +1252,7 @@ export const useStore = create<StoreState>()(
     },
 
     rotate180: (scope) => {
+      if (activeLocked(get)) return;
       get().pushHistory();
       set((s) => {
         const src = activeRasterData(s);
@@ -1108,6 +1277,7 @@ export const useStore = create<StoreState>()(
     // Making a raster layer active clears any object/marquee selection that
     // belonged to other layers.
     setActiveLayer: (id) =>
+      refuseLocked(get, id) ||
       set((s) =>
         s.design.layers.some((l) => l.id === id && l.kind === 'raster')
           ? {
@@ -1145,6 +1315,7 @@ export const useStore = create<StoreState>()(
     },
 
     removeLayer: (id) => {
+      if (refuseLocked(get, id)) return;
       const s0 = get();
       const layer = s0.design.layers.find((l) => l.id === id);
       if (!layer) return;
@@ -1229,6 +1400,7 @@ export const useStore = create<StoreState>()(
       if (idx <= 0) return; // nothing below to merge into
       const below = s0.design.layers[idx - 1];
       const top = s0.design.layers[idx];
+      if (refuseLocked(get, top.id) || refuseLocked(get, below.id)) return;
       const merged = compositeRange(s0.design, idx - 1, idx);
       s0.pushHistory();
       const nid = uid();
@@ -1306,6 +1478,37 @@ export const useStore = create<StoreState>()(
         },
         dirty: true,
       }));
+    },
+
+    guardActiveEdit: () => activeLocked(get),
+
+    toggleLayerLocked: (id) => {
+      get().pushHistory();
+      set((s) => {
+        const layers = s.design.layers.map((l) => (l.id === id ? { ...l, locked: !l.locked } : l));
+        const layer = layers.find((l) => l.id === id);
+        if (!layer?.locked) return { design: { ...s.design, layers }, dirty: true };
+        // locking: let go of it if it was selected / being edited…
+        const patch: Partial<StoreState> = { design: { ...s.design, layers }, dirty: true };
+        if (s.selectedShapeId === id) Object.assign(patch, { selectedShapeId: null, editingShape: null });
+        if (s.selectedSelburoseId === id || s.editingSelburose === id)
+          Object.assign(patch, { selectedSelburoseId: null, editingSelburose: null });
+        if (s.selectedImageId === id || s.editingImage === id)
+          Object.assign(patch, { selectedImageId: null, editingImage: null });
+        // …and move painting to the nearest unlocked drawing layer, if any
+        if (s.activeLayer === id) {
+          const at = layers.findIndex((l) => l.id === id);
+          const free = (i: number) => layers[i]?.kind === 'raster' && !layers[i].locked;
+          for (let d = 1; d < layers.length; d++) {
+            const i = [at - d, at + d].find(free);
+            if (i !== undefined) {
+              patch.activeLayer = layers[i].id;
+              break;
+            }
+          }
+        }
+        return patch;
+      });
     },
 
     toggleLayerVisible: (id) => {
@@ -1387,6 +1590,7 @@ export const useStore = create<StoreState>()(
     },
 
     openSelburoseEditor: (id) =>
+      refuseLocked(get, id) ||
       set({
         editingSelburose: id,
         rightPanel: 'selburose',
@@ -1402,6 +1606,7 @@ export const useStore = create<StoreState>()(
       })),
 
     selectSelburose: (id) =>
+      refuseLocked(get, id) ||
       set({
         selectedSelburoseId: id,
         selectedImageId: null,
@@ -1525,6 +1730,7 @@ export const useStore = create<StoreState>()(
     },
 
     openShapeEditor: (id) =>
+      refuseLocked(get, id) ||
       set({
         editingShape: id,
         rightPanel: 'shape',
@@ -1541,6 +1747,7 @@ export const useStore = create<StoreState>()(
       })),
 
     selectShape: (id) =>
+      refuseLocked(get, id) ||
       set({
         selectedShapeId: id,
         selectedSelburoseId: null,
@@ -1687,10 +1894,15 @@ export const useStore = create<StoreState>()(
         s0.design.palette.colors.length - 1,
       );
       let targetId: string | null = null;
+      const bakeable = (l: Layer) => l.kind === 'raster' && !l.locked;
       for (let i = idx - 1; i >= 0 && !targetId; i--)
-        if (s0.design.layers[i].kind === 'raster') targetId = s0.design.layers[i].id;
+        if (bakeable(s0.design.layers[i])) targetId = s0.design.layers[i].id;
       for (let i = idx + 1; i < s0.design.layers.length && !targetId; i++)
-        if (s0.design.layers[i].kind === 'raster') targetId = s0.design.layers[i].id;
+        if (bakeable(s0.design.layers[i])) targetId = s0.design.layers[i].id;
+      if (!targetId) {
+        s0.notify('Every drawing layer is locked');
+        return;
+      }
       s0.pushHistory();
       set((s) => {
         const withoutShape = s.design.layers.filter((l) => l.id !== id);
@@ -1797,9 +2009,12 @@ export const useStore = create<StoreState>()(
       get().pushHistory();
       set((s) => {
         const { columns, rows } = s.design.loom;
+        // locked layers stay exactly as they are
         const layers = s.design.layers
-          .filter((l) => l.kind === 'raster')
-          .map((l) => ({ ...(l as RasterLayer), data: emptyGrid(columns, rows) }));
+          .filter((l) => l.kind === 'raster' || l.locked)
+          .map((l) =>
+            l.kind === 'raster' && !l.locked ? { ...l, data: emptyGrid(columns, rows) } : l,
+          );
         const activeLayer = layers.some((l) => l.id === s.activeLayer)
           ? s.activeLayer
           : layers[0].id;
@@ -1815,6 +2030,7 @@ export const useStore = create<StoreState>()(
     },
 
     fillAll: () => {
+      if (activeLocked(get)) return;
       get().pushHistory();
       set((s) => {
         const { columns, rows } = s.design.loom;
@@ -1832,6 +2048,18 @@ export const useStore = create<StoreState>()(
       set((s) => ({ design: { ...s.design, meta: { ...s.design.meta, name } } })),
     setNotes: (notes) =>
       set((s) => ({ design: { ...s.design, meta: { ...s.design.meta, notes } } })),
+
+    setBackgroundColor: (index) => {
+      get().pushHistory();
+      set((s) => ({
+        design: {
+          ...s.design,
+          backgroundColor:
+            index != null && index >= 0 && index < s.design.palette.colors.length ? index : null,
+        },
+        dirty: true,
+      }));
+    },
 
     setBackground: (hex) => {
       const h = normalizeHex(hex);
@@ -1899,9 +2127,10 @@ export const useStore = create<StoreState>()(
         const idx = s.design.palette.colors.findIndex((c) => c.id === id);
         if (idx < 0) return {};
         const colors = s.design.palette.colors.filter((c) => c.id !== id);
-        const layers = remapLayerColors(s.design.layers, (v) =>
-          v === idx ? EMPTY : v > idx ? v - 1 : v,
-        );
+        const remap = (v: number) =>
+          v === idx ? EMPTY : v > idx ? v - 1 : v;
+        const layers = remapLayerColors(s.design.layers, remap);
+        const backgroundColor = remapBackground(s.design.backgroundColor, remap);
         const active =
           s.activeColor > idx
             ? s.activeColor - 1
@@ -1913,6 +2142,7 @@ export const useStore = create<StoreState>()(
             ...s.design,
             palette: { ...s.design.palette, colors },
             layers,
+            backgroundColor,
           },
           activeColor: clamp(active, 0, colors.length - 1),
           dirty: true,
@@ -1928,15 +2158,17 @@ export const useStore = create<StoreState>()(
         const j = i + dir;
         if (i < 0 || j < 0 || j >= cs.length) return {};
         [cs[i], cs[j]] = [cs[j], cs[i]];
-        const layers = remapLayerColors(s.design.layers, (v) =>
-          v === i ? j : v === j ? i : v,
-        );
+        const remap = (v: number) =>
+          v === i ? j : v === j ? i : v;
+        const layers = remapLayerColors(s.design.layers, remap);
+        const backgroundColor = remapBackground(s.design.backgroundColor, remap);
         const active = s.activeColor === i ? j : s.activeColor === j ? i : s.activeColor;
         return {
           design: {
             ...s.design,
             palette: { ...s.design.palette, colors: cs },
             layers,
+            backgroundColor,
           },
           activeColor: active,
           dirty: true,
@@ -1957,9 +2189,10 @@ export const useStore = create<StoreState>()(
         });
 
         // Update cell + star indices
-        const layers = remapLayerColors(s.design.layers, (v) =>
-          indexMap.has(v) ? indexMap.get(v)! : v,
-        );
+        const remap = (v: number) =>
+          indexMap.has(v) ? indexMap.get(v)! : v;
+        const layers = remapLayerColors(s.design.layers, remap);
+        const backgroundColor = remapBackground(s.design.backgroundColor, remap);
 
         // Update active color index if needed
         const newActiveIdx = indexMap.get(s.activeColor) ?? s.activeColor;
@@ -1969,6 +2202,7 @@ export const useStore = create<StoreState>()(
             ...s.design,
             palette: { ...s.design.palette, colors: newColors },
             layers,
+            backgroundColor,
           },
           activeColor: newActiveIdx,
           dirty: true,
@@ -1980,14 +2214,16 @@ export const useStore = create<StoreState>()(
       get().pushHistory();
       set((s) => {
         const n = p.colors.length;
-        const layers = remapLayerColors(s.design.layers, (v) =>
-          v < n ? v : EMPTY,
-        );
+        const remap = (v: number) =>
+          v < n ? v : EMPTY;
+        const layers = remapLayerColors(s.design.layers, remap);
+        const backgroundColor = remapBackground(s.design.backgroundColor, remap);
         return {
           design: {
             ...s.design,
             palette: structuredClone(p),
             layers,
+            backgroundColor,
           },
           activeColor: clamp(s.activeColor, 0, n - 1),
           paletteSlotPath: null, // callers loading a saved palette set it after

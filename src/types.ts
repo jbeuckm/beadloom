@@ -58,6 +58,7 @@ export interface RasterLayer {
   kind: 'raster';
   name: string;
   visible: boolean;
+  locked?: boolean; // no selecting or editing its contents
   data: number[][]; // rows × cols; palette index or EMPTY
 }
 
@@ -67,6 +68,7 @@ export interface SelburoseLayer {
   kind: 'selburose';
   name: string;
   visible: boolean;
+  locked?: boolean; // no selecting or editing its contents
   star: SelburoseObject;
 }
 
@@ -80,6 +82,7 @@ export interface ImageLayer {
   kind: 'image';
   name: string;
   visible: boolean;
+  locked?: boolean; // no selecting or editing its contents
   src: string; // session object URL
   w: number; // natural pixel width
   h: number; // natural pixel height
@@ -124,6 +127,7 @@ export interface ShapeLayer {
   kind: 'shape';
   name: string;
   visible: boolean;
+  locked?: boolean; // no selecting or editing its contents
   shape: ShapeObject;
 }
 
@@ -154,6 +158,9 @@ export interface BeadDesign {
   loom: LoomSpec;
   palette: Palette; // every colour used by the design is specified here
   background: string; // "#RRGGBB" painted behind empty cells
+  /** A palette index that fills every position no layer covers — a real bead
+   *  colour (counted, printed, exported). Absent / null leaves them empty. */
+  backgroundColor?: number | null;
   layers: Layer[]; // bottom → top; composited for display and export
 }
 
@@ -212,6 +219,7 @@ export interface Snapshot {
   loom: LoomSpec;
   palette: Palette;
   background: string;
+  backgroundColor: number | null;
   layers: Layer[];
   activeLayer: string;
   activeColor: number;

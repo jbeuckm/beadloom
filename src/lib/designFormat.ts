@@ -127,6 +127,7 @@ export function validateDesign(raw: any): BeadDesign {
           id: String(l.id ?? `l${i + 1}`),
           name: String(l.name ?? `Layer ${i + 1}`),
           visible: l.visible !== false,
+          ...(l.locked === true ? { locked: true } : {}),
         };
         if (l.kind === 'selburose')
           return { ...common, kind: 'selburose', star: coerceStar(l.star, i) };
@@ -182,6 +183,11 @@ export function validateDesign(raw: any): BeadDesign {
     loom: { stitch: 'loom', columns: cols, rows, cellAspect: cellAspect },
     palette,
     background: normalizeHex(String(raw?.background ?? '#FFFFFF')) ?? '#FFFFFF',
+    ...(Number.isInteger(raw?.backgroundColor) &&
+    raw.backgroundColor >= 0 &&
+    raw.backgroundColor < palette.colors.length
+      ? { backgroundColor: raw.backgroundColor }
+      : {}),
     layers,
   };
   if (raw?.meta?.notes) out.meta.notes = String(raw.meta.notes);

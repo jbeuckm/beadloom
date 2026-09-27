@@ -221,6 +221,137 @@ test('magic wand selects a contiguous region and deletes just that shape', async
   expect(await cellValue(page, 10, 4)).toBe(5);
 });
 
+test('magic wand: Shift adds separate regions, Option subtracts, or use the mode switch', async ({
+  page,
+}) => {
+  // two separate red beads and a separate blue one
+  await pickTool(page, 'Pen');
+  await tapCell(page, 2, 2);
+  await tapCell(page, 20, 10);
+  await page.locator('.swatch').nth(4).click();
+  await tapCell(page, 12, 6);
+
+  await pickTool(page, 'Wand');
+  await tapCell(page, 2, 2);
+  expect((await snapshot(page)).selectionMaskSize).toBe(1);
+
+  // Shift-click adds a disjoint region
+  await page.keyboard.down('Shift');
+  await tapCell(page, 20, 10);
+  await tapCell(page, 12, 6);
+  await page.keyboard.up('Shift');
+  let s = await snapshot(page);
+  expect(s.selectionMaskSize).toBe(3);
+  expect(s.selection).toMatchObject({ c0: 2, r0: 2, c1: 20, r1: 10 });
+
+  // Option / Alt-click takes one away again
+  await page.keyboard.down('Alt');
+  await tapCell(page, 12, 6);
+  await page.keyboard.up('Alt');
+  expect((await snapshot(page)).selectionMaskSize).toBe(2);
+
+  // a plain click starts over…
+  await tapCell(page, 12, 6);
+  expect((await snapshot(page)).selectionMaskSize).toBe(1);
+
+  // …unless the toolbar's Add mode is on (no keyboard needed)
+  await page.getByRole('radio', { name: 'Add' }).click();
+  expect((await snapshot(page)).wandMode).toBe('add');
+  await tapCell(page, 2, 2);
+  await tapCell(page, 20, 10);
+  expect((await snapshot(page)).selectionMaskSize).toBe(3);
+
+  // delete clears exactly the selected beads, wherever they are
+  await toolButton(page, 'Delete').click();
+  expect((await snapshot(page)).beads).toBe(0);
+});
+
+test('copy / paste: ⌘C copies every visible layer; shapes copy as objects', async ({
+  page,
+}) => {
+  const notice = page.locator('.notice');
+
+  // nothing on the clipboard yet
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(notice).toHaveText('Nothing to paste — copy something first');
+
+  // a bead on the drawing layer, and a live (unflattened) 2×2 box shape
+  await pickTool(page, 'Pen');
+  await tapCell(page, 2, 2);
+  await page.locator('.swatch').nth(4).click();
+  await pickTool(page, 'Box+');
+  await dragCells(page, [4, 2], [5, 3]);
+  let s = await snapshot(page);
+  expect(s.shapes).toHaveLength(1);
+  expect(s.rasterBeads).toBe(1);
+
+  // ⌘C with the shape selected copies the shape itself; ⌘V drops a live copy
+  await page.keyboard.press('ControlOrMeta+c');
+  await expect(notice).toHaveText('Copied box');
+  await page.keyboard.press('ControlOrMeta+v');
+  s = await snapshot(page);
+  expect(s.shapes).toHaveLength(2);
+  expect(s.shapes[1]).toMatchObject({ x0: 6, y0: 4, x1: 7, y1: 5 }); // offset by 2
+  // ⌘X cuts the copy (and ⌘V would bring it back)
+  await page.keyboard.press('ControlOrMeta+x');
+  await expect(notice).toHaveText('Cut box');
+  expect((await snapshot(page)).shapes).toHaveLength(1);
+  await page.keyboard.press('ControlOrMeta+v');
+  expect((await snapshot(page)).shapes).toHaveLength(2);
+  await page.keyboard.press('ControlOrMeta+z');
+  expect((await snapshot(page)).shapes).toHaveLength(1);
+
+  // a background colour fills the gaps on screen, but isn't copied
+  await page.getByRole('button', { name: 'Background', exact: true }).click();
+  await page.locator('.modal').getByRole('radio', { name: 'Cyan' }).click();
+
+  // marquee over the bead and the box: ⌘C copies what you see, from both layers
+  await pickTool(page, 'Select');
+  await dragCells(page, [2, 2], [5, 3]);
+  await page.keyboard.press('ControlOrMeta+c');
+  await expect(notice).toHaveText('Copied 5 beads');
+  await page.keyboard.press('ControlOrMeta+v');
+  expect((await snapshot(page)).pasteMode).toBe(true);
+  await tapCell(page, 20, 10);
+  expect(await cellValue(page, 20, 10)).toBe(0); // the bead
+  expect(await cellValue(page, 22, 10)).toBe(4); // the box, now as beads
+  expect(await cellValue(page, 23, 11)).toBe(4);
+  s = await snapshot(page);
+  expect(s.rasterBeads).toBe(1 + 5); // the gaps stayed empty (background shows through)
+  expect(await cellValue(page, 21, 10)).toBe(5);
+});
+
+test('with the Box tool still active, dragging the new box\'s handles reshapes it', async ({
+  page,
+}) => {
+  await pickTool(page, 'Box');
+  await dragCells(page, [4, 4], [8, 7]);
+  let s = await snapshot(page);
+  expect(s.shapes).toHaveLength(1);
+  expect(s.shapes[0]).toMatchObject({ x0: 4, y0: 4, x1: 8, y1: 7 });
+  expect(s.tool).toBe('rect'); // still drawing boxes
+
+  // drag the bottom-right corner handle: resizes, no new box
+  await dragCells(page, [8, 7], [12, 9]);
+  s = await snapshot(page);
+  expect(s.shapes).toHaveLength(1);
+  expect(s.shapes[0]).toMatchObject({ x0: 4, y0: 4, x1: 12, y1: 9 });
+
+  // the top-left handle too
+  await dragCells(page, [4, 4], [2, 3]);
+  expect((await snapshot(page)).shapes[0]).toMatchObject({ x0: 2, y0: 3, x1: 12, y1: 9 });
+
+  // dragging the body moves it
+  await dragCells(page, [7, 6], [9, 7]);
+  expect((await snapshot(page)).shapes[0]).toMatchObject({ x0: 4, y0: 4, x1: 14, y1: 10 });
+
+  // dragging on empty grid still draws a new box
+  await dragCells(page, [20, 4], [24, 8]);
+  s = await snapshot(page);
+  expect(s.shapes).toHaveLength(2);
+  expect(s.shapes[1]).toMatchObject({ x0: 20, y0: 4, x1: 24, y1: 8 });
+});
+
 test('mirror horizontal flips the whole design', async ({ page }) => {
   await pickTool(page, 'Pen');
   await tapCell(page, 2, 5);
@@ -292,8 +423,52 @@ test('palette: editing a colour updates its hex everywhere', async ({ page }) =>
   expect(hexes[0]).toBe('#123456');
 });
 
-test('background colour of empty cells is editable', async ({ page }) => {
-  await page.locator('.bg-row input[type="color"]').fill('#ffcc00');
+test('background: a palette colour fills every empty bead position', async ({ page }) => {
+  await pickTool(page, 'Pen');
+  await tapCell(page, 3, 3);
+  let s = await snapshot(page);
+  const total = s.columns * s.rows;
+  expect(s.beads).toBe(1);
+
+  // choose Cyan (index 5) as the background
+  const bgButton = page.getByRole('button', { name: 'Background', exact: true });
+  await bgButton.click();
+  const dialog = page.locator('.modal', { hasText: 'Background' });
+  await expect(dialog.getByRole('radio', { name: /None/ })).toHaveAttribute('aria-checked', 'true');
+  await dialog.getByRole('radio', { name: 'Cyan' }).click();
+  await expect(dialog).toHaveCount(0);
+  s = await snapshot(page);
+  expect(s.backgroundColor).toBe(5);
+  expect(s.beads).toBe(total); // every position now holds a bead
+  expect(s.rasterBeads).toBe(1); // …without baking anything into a layer
+  expect(await cellValue(page, 0, 0)).toBe(5);
+  expect(await cellValue(page, 3, 3)).toBe(0); // painted beads sit on top
+  await expect(page.locator('.swatch-row').nth(5).locator('.bg-badge')).toHaveText('BG');
+
+  // erasing reveals the background, not a hole
+  await pickTool(page, 'Eraser');
+  await tapCell(page, 3, 3);
+  expect(await cellValue(page, 3, 3)).toBe(5);
+
+  // it follows the palette: removing an earlier colour renumbers it…
+  await page.locator('.swatch-meta').nth(2).click();
+  await page.locator('.modal').getByRole('button', { name: 'Delete colour' }).click();
+  expect((await snapshot(page)).backgroundColor).toBe(4);
+  // …and removing the background colour itself leaves positions empty
+  await page.locator('.swatch-meta').nth(4).click();
+  await page.locator('.modal').getByRole('button', { name: 'Delete colour' }).click();
+  s = await snapshot(page);
+  expect(s.backgroundColor).toBeNull();
+  expect(s.beads).toBe(0);
+
+  // undo brings it back; "None" clears it; the tint only colours empty cells
+  await page.keyboard.press('ControlOrMeta+z');
+  expect((await snapshot(page)).backgroundColor).toBe(4);
+  await bgButton.click();
+  await dialog.getByRole('radio', { name: /None/ }).click();
+  expect((await snapshot(page)).backgroundColor).toBeNull();
+  await bgButton.click();
+  await dialog.getByLabel('Empty-cell tint').fill('#ffcc00');
   expect((await snapshot(page)).background).toBe('#FFCC00');
 });
 

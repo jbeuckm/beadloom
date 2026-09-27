@@ -50,6 +50,7 @@ export async function snapshot(page: Page) {
         kind: l.kind,
         name: l.name,
         visible: l.visible,
+        locked: !!l.locked,
       })),
       activeLayer: s.activeLayer,
       selburoses: selburoseLayers.map((l: any) => ({ ...l.star })),
@@ -94,6 +95,9 @@ export async function snapshot(page: Page) {
       slotPath: s.slotPath,
       paletteSlotPath: s.paletteSlotPath,
       brushSize: s.brushSize,
+      selectionMaskSize: s.selectionMask ? s.selectionMask.size : null,
+      wandMode: s.wandMode,
+      backgroundColor: s.design.backgroundColor ?? null,
       view: s.view,
       format: s.design.format,
     };

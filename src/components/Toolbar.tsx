@@ -132,7 +132,7 @@ export default function Toolbar() {
       <button
         className="tool"
         onClick={s.copySelection}
-        disabled={!hasSel && !selId}
+        disabled={!hasSel && !selId && !shapeId}
         title="Copy selection"
         aria-label="Copy selection"
       >
@@ -142,7 +142,7 @@ export default function Toolbar() {
       <button
         className="tool"
         onClick={s.cutSelection}
-        disabled={!hasSel && !selId}
+        disabled={!hasSel && !selId && !shapeId}
         title="Cut selection"
         aria-label="Cut selection"
       >
@@ -151,8 +151,8 @@ export default function Toolbar() {
       </button>
       <button
         className={'tool' + (s.pasteMode ? ' active' : '')}
-        onClick={() => (hasStarClip ? s.pasteStar() : s.setPasteMode(!s.pasteMode))}
-        disabled={!hasClip && !hasStarClip}
+        onClick={() => (s.pasteMode ? s.setPasteMode(false) : s.paste())}
+        disabled={!hasClip && !hasStarClip && !s.shapeClipboard}
         title="Paste — then tap the grid to drop"
         aria-label="Paste"
         aria-pressed={s.pasteMode}
@@ -182,6 +182,30 @@ export default function Toolbar() {
           max={20}
           onChange={s.setBrushSize}
         />
+      )}
+
+      {s.tool === 'wand' && (
+        <div className="seg-tool" role="radiogroup" aria-label="Wand selection mode">
+          <span className="lb">Select</span>
+          {(
+            [
+              ['new', 'New', 'Replace the selection'],
+              ['add', 'Add', 'Add to the selection (or hold Shift)'],
+              ['subtract', 'Subtract', 'Take away from the selection (or hold Option / Alt)'],
+            ] as const
+          ).map(([m, label, title]) => (
+            <button
+              key={m}
+              role="radio"
+              aria-checked={s.wandMode === m}
+              className={s.wandMode === m ? 'on' : ''}
+              title={title}
+              onClick={() => s.setWandMode(m)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       )}
 
       {showThickness && (

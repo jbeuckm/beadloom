@@ -10,6 +10,23 @@ import PrintView from './PrintView';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
 
+/** A brief status message ("Copied 12 beads", "Nothing to paste…"). */
+function Notice() {
+  const notice = useStore((s) => s.notice);
+  const [shown, setShown] = useState<{ text: string; id: number } | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    setShown(notice);
+    const t = window.setTimeout(() => setShown(null), 2200);
+    return () => clearTimeout(t);
+  }, [notice]);
+  return shown ? (
+    <div className="notice" role="status" key={shown.id}>
+      {shown.text}
+    </div>
+  ) : null;
+}
+
 export default function App() {
   const [dialog, setDialog] = useState<DialogId | null>(null);
   const rightPanel = useStore((s) => s.rightPanel);
@@ -60,8 +77,7 @@ export default function App() {
         return;
       }
       if (mod && k === 'v') {
-        if (s.starClipboard) s.pasteStar();
-        else if (s.clipboard) s.setPasteMode(true);
+        s.paste();
         return;
       }
       if (mod && k === 'a') {
@@ -170,6 +186,7 @@ export default function App() {
       <PalettePanel />
       <StatusBar />
       {dialog && <Dialogs which={dialog} onClose={() => setDialog(null)} />}
+      <Notice />
       {showPrint && <PrintView />}
     </div>
   );

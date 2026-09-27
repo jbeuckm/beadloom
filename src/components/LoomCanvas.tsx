@@ -923,10 +923,126 @@ export default function LoomCanvas() {
       return;
     }
 
+    // A selected line / box / polygon: grab its handles or body. Shared by the
+    // Select tool and the drawing tools, so a shape you just drew can be
+    // reshaped without switching tools. Returns true when it took the press.
+    const grabSelectedShape = (g: { cx: number; cy: number }): boolean => {
+      // ---- line / box shapes: end / corner handles first, then the body
+      const grab = 0.6 + 9 / (PX_PER_COL * S().view.zoom);
+      const sSel = selectedShapeId ? shapeById(d, selectedShapeId) : undefined;
+      if (sSel) {
+        const near = (hx: number, hy: number) =>
+          Math.hypot(g.cx - (hx + 0.5), g.cy - (hy + 0.5)) <= grab;
+
+        // ---- polygon vertex editing ----
+        if (sSel.kind === 'poly') {
+          const vi = sSel.points.findIndex((p) => near(p[0], p[1]));
+          if (vi >= 0) {
+            if (e.altKey || e.button === 2) {
+              S().removeShapePoint(sSel.id, vi);
+              return true;
+            }
+            S().pushHistory();
+            shapeGesture.current = {
+              id: sSel.id,
+              mode: 'vertex',
+              vi,
+              gx0: g.cx,
+              gy0: g.cy,
+              x0: 0,
+              y0: 0,
+              x1: 0,
+              y1: 0,
+              pts0: [],
+            };
+            return true;
+          }
+          // click on an edge -> insert a new vertex there
+          const n = sSel.points.length;
+          const segs = sSel.closed ? n : n - 1;
+          for (let i = 0; i < segs; i++) {
+            const a = sSel.points[i];
+            const bb = sSel.points[(i + 1) % n];
+            if (
+              distToSegment(
+                g.cx,
+                g.cy,
+                a[0] + 0.5,
+                a[1] + 0.5,
+                bb[0] + 0.5,
+                bb[1] + 0.5,
+              ) <=
+              Math.max(0.7, sSel.thickness / 2 + 0.4)
+            ) {
+              S().insertShapePoint(sSel.id, i + 1, [
+                Math.round(g.cx - 0.5),
+                Math.round(g.cy - 0.5),
+              ]);
+              const nsh = shapeById(S().design, sSel.id);
+              S().pushHistory();
+              shapeGesture.current = {
+                id: sSel.id,
+                mode: 'vertex',
+                vi: i + 1,
+                gx0: g.cx,
+                gy0: g.cy,
+                x0: 0,
+                y0: 0,
+                x1: 0,
+                y1: 0,
+                pts0: [],
+              };
+              void nsh;
+              return true;
+            }
+          }
+        }
+
+        const endMode: 'p0' | 'p1' | null = near(sSel.x0, sSel.y0)
+          ? 'p0'
+          : near(sSel.x1, sSel.y1)
+            ? 'p1'
+            : null;
+        const b = shapeGridBBox({
+          kind: sSel.kind,
+          x0: sSel.x0,
+          y0: sSel.y0,
+          x1: sSel.x1,
+          y1: sSel.y1,
+          points: sSel.points,
+          closed: sSel.closed,
+          thickness: sSel.thickness,
+          fill: sSel.fill,
+        });
+        const inBox =
+          g.cx >= b.minX - 0.5 &&
+          g.cx <= b.maxX + 0.5 &&
+          g.cy >= b.minY - 0.5 &&
+          g.cy <= b.maxY + 0.5;
+        if ((sSel.kind !== 'poly' && endMode) || inBox) {
+          S().pushHistory();
+          shapeGesture.current = {
+            id: sSel.id,
+            mode: sSel.kind !== 'poly' && endMode ? endMode : 'move',
+            vi: -1,
+            gx0: g.cx,
+            gy0: g.cy,
+            x0: sSel.x0,
+            y0: sSel.y0,
+            x1: sSel.x1,
+            y1: sSel.y1,
+            pts0: sSel.points.map((p): [number, number] => [p[0], p[1]]),
+          };
+          return true;
+        }
+      }
+      return false;
+    };
+
     switch (tool) {
       case 'pen':
       case 'eraser': {
-        if (!inb) return;
+        if (!inb || S().guardActiveEdit()) return;
         S().pushHistory();
         painting.current = true;
         strokeValue.current = tool === 'eraser' ? EMPTY : S().activeColor;
@@ -935,16 +1051,17 @@ export default function LoomCanvas() {
         break;
       }
       case 'fill': {
-        if (!inb) return;
+        if (!inb || S().guardActiveEdit()) return;
         S().pushHistory();
         S().bucketFill(c, r);
         break;
       }
       case 'wand': {
-        if (inb) S().selectWand(c, r);
-        else {
-          S().setSelection(null);
-        }
+        // Shift adds a region, Option / Alt takes one away (as in Photoshop);
+        // with no key held, the toolbar's New / Add / Subtract choice applies
+        const mode = e.shiftKey ? 'add' : e.altKey ? 'subtract' : undefined;
+        if (inb) S().selectWand(c, r, mode);
+        else if (!mode && S().wandMode === 'new') S().setSelection(null);
         break;
       }
       case 'eyedropper': {
@@ -967,115 +1084,8 @@ export default function LoomCanvas() {
       case 'select': {
         const g = toCellF(e.clientX, e.clientY);
 
-        // ---- line / box shapes: end / corner handles first, then the body
-        const grab = 0.6 + 9 / (PX_PER_COL * S().view.zoom);
-        const sSel = selectedShapeId ? shapeById(d, selectedShapeId) : undefined;
-        if (sSel) {
-          const near = (hx: number, hy: number) =>
-            Math.hypot(g.cx - (hx + 0.5), g.cy - (hy + 0.5)) <= grab;
+        if (grabSelectedShape(g)) return;
 
-          // ---- polygon vertex editing ----
-          if (sSel.kind === 'poly') {
-            const vi = sSel.points.findIndex((p) => near(p[0], p[1]));
-            if (vi >= 0) {
-              if (e.altKey || e.button === 2) {
-                S().removeShapePoint(sSel.id, vi);
-                return;
-              }
-              S().pushHistory();
-              shapeGesture.current = {
-                id: sSel.id,
-                mode: 'vertex',
-                vi,
-                gx0: g.cx,
-                gy0: g.cy,
-                x0: 0,
-                y0: 0,
-                x1: 0,
-                y1: 0,
-                pts0: [],
-              };
-              return;
-            }
-            // click on an edge -> insert a new vertex there
-            const n = sSel.points.length;
-            const segs = sSel.closed ? n : n - 1;
-            for (let i = 0; i < segs; i++) {
-              const a = sSel.points[i];
-              const bb = sSel.points[(i + 1) % n];
-              if (
-                distToSegment(
-                  g.cx,
-                  g.cy,
-                  a[0] + 0.5,
-                  a[1] + 0.5,
-                  bb[0] + 0.5,
-                  bb[1] + 0.5,
-                ) <=
-                Math.max(0.7, sSel.thickness / 2 + 0.4)
-              ) {
-                S().insertShapePoint(sSel.id, i + 1, [
-                  Math.round(g.cx - 0.5),
-                  Math.round(g.cy - 0.5),
-                ]);
-                const nsh = shapeById(S().design, sSel.id);
-                S().pushHistory();
-                shapeGesture.current = {
-                  id: sSel.id,
-                  mode: 'vertex',
-                  vi: i + 1,
-                  gx0: g.cx,
-                  gy0: g.cy,
-                  x0: 0,
-                  y0: 0,
-                  x1: 0,
-                  y1: 0,
-                  pts0: [],
-                };
-                void nsh;
-                return;
-              }
-            }
-          }
-
-          const endMode: 'p0' | 'p1' | null = near(sSel.x0, sSel.y0)
-            ? 'p0'
-            : near(sSel.x1, sSel.y1)
-              ? 'p1'
-              : null;
-          const b = shapeGridBBox({
-            kind: sSel.kind,
-            x0: sSel.x0,
-            y0: sSel.y0,
-            x1: sSel.x1,
-            y1: sSel.y1,
-            points: sSel.points,
-            closed: sSel.closed,
-            thickness: sSel.thickness,
-            fill: sSel.fill,
-          });
-          const inBox =
-            g.cx >= b.minX - 0.5 &&
-            g.cx <= b.maxX + 0.5 &&
-            g.cy >= b.minY - 0.5 &&
-            g.cy <= b.maxY + 0.5;
-          if ((sSel.kind !== 'poly' && endMode) || inBox) {
-            S().pushHistory();
-            shapeGesture.current = {
-              id: sSel.id,
-              mode: sSel.kind !== 'poly' && endMode ? endMode : 'move',
-              vi: -1,
-              gx0: g.cx,
-              gy0: g.cy,
-              x0: sSel.x0,
-              y0: sSel.y0,
-              x1: sSel.x1,
-              y1: sSel.y1,
-              pts0: sSel.points.map((p): [number, number] => [p[0], p[1]]),
-            };
-            return;
-          }
-        }
         const shpHit = hitShape(visibleShapes(d), g.cx, g.cy);
         if (shpHit) {
           const now = Date.now();
@@ -1158,6 +1168,8 @@ export default function LoomCanvas() {
       case 'line':
       case 'rect':
       case 'rectFill': {
+        // on the shape just drawn (or any selected one): reshape / move it
+        if (grabSelectedShape(toCellF(e.clientX, e.clientY))) return;
         anchor.current = { c, r };
         setDrag({ mode: tool as Drag['mode'], ax: c, ay: r, bx: c, by: r });
         break;
@@ -1538,7 +1550,7 @@ function selburoseParams(o: SelburoseObject) {
 function visibleStars(design: BeadDesign): SelburoseObject[] {
   const out: SelburoseObject[] = [];
   for (const l of design.layers)
-    if (l.kind === 'selburose' && l.visible) out.push(l.star);
+    if (l.kind === 'selburose' && l.visible && !l.locked) out.push(l.star); // locked: not pickable
   return out;
 }
 
@@ -1584,7 +1596,7 @@ function hitSelburose(
 function visibleShapes(design: BeadDesign): ShapeObject[] {
   const out: ShapeObject[] = [];
   for (const l of design.layers)
-    if (l.kind === 'shape' && l.visible) out.push(l.shape);
+    if (l.kind === 'shape' && l.visible && !l.locked) out.push(l.shape); // locked: not pickable
   return out;
 }
 

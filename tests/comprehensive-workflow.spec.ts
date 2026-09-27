@@ -224,8 +224,10 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
   await page.locator('.modal').getByRole('button', { name: 'Delete colour' }).click();
   await expect(page.locator('.swatch-row')).toHaveCount(10);
 
-  await page.locator('.bg-row input[type="color"]').fill('#ff8800');
+  await page.getByRole('button', { name: 'Background', exact: true }).click();
+  await page.getByLabel('Empty-cell tint').fill('#ff8800');
   expect((await snapshot(page)).background).toBe('#FF8800');
+  await page.locator('.modal').getByRole('button', { name: 'Done' }).click();
 
   // === 12. Grid resize two ways ==================================
   const colInput = page.getByLabel('Column count');

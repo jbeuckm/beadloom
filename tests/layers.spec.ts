@@ -167,3 +167,73 @@ test('selecting a layer deselects objects on other layers', async ({ page }) => 
   expect(s.selectedSelburoseId).toBeNull();
   expect(s.activeLayer).toBe(s.layers[0].id);
 });
+
+test('locked layers: no selecting, painting, deleting or moving their contents', async ({
+  page,
+}) => {
+  const notice = page.locator('.notice');
+  const row = (name: string) => rows(page).filter({ hasText: name });
+  const beads = async () => (await snapshot(page)).rasterBeads;
+  const openLayers = async () => {
+    if (!(await panel(page).isVisible())) await pickTool(page, 'Layers');
+  };
+
+  // a bead on Layer 1, a second layer with its own bead
+  await pickTool(page, 'Pen');
+  await dragCells(page, [3, 3], [3, 3]);
+  await openLayers();
+  await panel(page).getByRole('button', { name: 'Add layer' }).click();
+  await pickTool(page, 'Pen');
+  await dragCells(page, [5, 5], [5, 5]);
+  let s = await snapshot(page);
+  const [l1, l2] = s.layers;
+  expect(s.activeLayer).toBe(l2.id);
+  expect(await beads()).toBe(2);
+
+  // lock Layer 2: painting moves to the nearest unlocked layer
+  await openLayers();
+  await row('Layer 2').getByRole('button', { name: 'Lock layer' }).click();
+  s = await snapshot(page);
+  expect(s.layers.find((l) => l.id === l2.id)!.locked).toBe(true);
+  expect(s.activeLayer).toBe(l1.id);
+  await expect(row('Layer 2').getByRole('button', { name: 'Delete layer' })).toBeDisabled();
+
+  // it can't be picked from the panel
+  await row('Layer 2').click();
+  await expect(notice).toHaveText('“Layer 2” is locked');
+  expect((await snapshot(page)).activeLayer).toBe(l1.id);
+
+  // lock Layer 1 too: painting and filling are refused, nothing changes
+  await row('Layer 1').getByRole('button', { name: 'Lock layer' }).click();
+  await pickTool(page, 'Pen');
+  await dragCells(page, [8, 8], [12, 8]);
+  await expect(notice).toHaveText('“Layer 1” is locked');
+  await pickTool(page, 'Fill');
+  await dragCells(page, [20, 10], [20, 10]);
+  expect(await beads()).toBe(2);
+  expect(await cellValue(page, 8, 8)).toBe(-1);
+
+  // a locked shape can't be selected on the canvas
+  await pickTool(page, 'Box+');
+  await dragCells(page, [15, 3], [17, 5]);
+  s = await snapshot(page);
+  const box = s.layers[s.layers.length - 1];
+  expect(s.selectedShapeId).toBe(box.id);
+  await openLayers();
+  await row(box.name).getByRole('button', { name: 'Lock layer' }).click();
+  expect((await snapshot(page)).selectedShapeId).toBeNull(); // locking lets go of it
+  await pickTool(page, 'Select');
+  await dragCells(page, [16, 4], [20, 8]); // try to drag it
+  s = await snapshot(page);
+  expect(s.selectedShapeId).toBeNull();
+  expect(s.shapes[0]).toMatchObject({ x0: 15, y0: 3, x1: 17, y1: 5 });
+
+  // the lock is saved with the design, and unlocking restores editing
+  const saved = await page.evaluate(() => JSON.parse(window.__beadloom.getState().exportJSON()));
+  expect(saved.layers.map((l: { locked?: boolean }) => !!l.locked)).toEqual([true, true, true]);
+  await openLayers();
+  await row('Layer 1').getByRole('button', { name: 'Unlock layer' }).click();
+  await pickTool(page, 'Pen');
+  await dragCells(page, [8, 8], [8, 8]);
+  expect(await cellValue(page, 8, 8)).toBe(0);
+});
