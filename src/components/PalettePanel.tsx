@@ -1,18 +1,19 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
-import PaletteEditor from './PaletteEditor';
+import ColorDialog from './ColorDialog';
 import PaletteLibrary from './PaletteLibrary';
 import { Icon } from './icons';
 import { colorUsage } from '../lib/grid';
 import { compositeLayers } from '../lib/layers';
 import { contrastText } from '../util';
 import { serializePalette } from '../lib/designFormat';
-import * as storage from '../lib/storage';
+import { paletteLibrary, splitPath, stampPaletteJson } from '../lib/library';
 
 export default function PalettePanel() {
   const s = useStore();
   const [editing, setEditing] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [draggedColor, setDraggedColor] = useState<string | null>(null);
 
   const palette = s.design.palette;
@@ -29,7 +30,11 @@ export default function PalettePanel() {
       alert('Name the palette first.');
       return;
     }
-    storage.savePaletteSlot(name, serializePalette(palette));
+    // back into the folder it was loaded from / last saved to
+    const folder = s.paletteSlotPath ? splitPath(s.paletteSlotPath).folder : '';
+    s.setPaletteSlotPath(
+      paletteLibrary.save(folder, name, stampPaletteJson(serializePalette(palette))),
+    );
   };
 
   const handleDrop = (targetColorId: string) => {
@@ -101,7 +106,11 @@ export default function PalettePanel() {
       </div>
 
       <footer>
-        <button className="btn grow" onClick={s.addColor} title="Add a new colour">
+        <button
+          className="btn grow"
+          onClick={() => setAdding(true)}
+          title="Add a colour — pick one, or choose bead / yarn colours from a library"
+        >
           + Color
         </button>
         <button
@@ -141,9 +150,9 @@ export default function PalettePanel() {
         <button
           className="btn"
           onClick={() => setLibraryOpen(true)}
-          title="Palette library — presets, saved palettes, import / export"
+          title="Palette library — saved palettes, starter sets, import / export"
         >
-          <Icon name="swatches" size={16} /> Library
+          <Icon name="swatches" size={16} /> Palettes
         </button>
 
         <div className="bg-row">
@@ -158,7 +167,8 @@ export default function PalettePanel() {
         </div>
       </footer>
 
-      {editing && <PaletteEditor id={editing} onClose={() => setEditing(null)} />}
+      {editing && <ColorDialog id={editing} onClose={() => setEditing(null)} />}
+      {adding && <ColorDialog onClose={() => setAdding(false)} />}
       {libraryOpen && <PaletteLibrary onClose={() => setLibraryOpen(false)} />}
     </div>
   );

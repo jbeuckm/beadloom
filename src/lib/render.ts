@@ -9,12 +9,13 @@ export interface View {
 export interface BaseOpts {
   showGrid: boolean;
   showRowNumbers: boolean;
-  highlightRow: number | null;
+  workColumn: number | null; // wash out every other column
 }
 
 /**
  * Draws the "document" layer: piece background, coloured beads, grid lines,
- * outer border, optional row/column numbers and a highlighted working row.
+ * outer border, optional row/column numbers, and a working column (every other
+ * column washed out).
  * Shared by the interactive canvas and the PNG exporter so they stay in sync.
  * Assumes the context is already scaled for devicePixelRatio.
  */
@@ -59,15 +60,6 @@ export function drawBase(
     }
   }
 
-  if (
-    opts.highlightRow != null &&
-    opts.highlightRow >= 0 &&
-    opts.highlightRow < rows
-  ) {
-    ctx.fillStyle = 'rgba(255, 200, 0, 0.28)';
-    ctx.fillRect(offX, offY + opts.highlightRow * cellH, cols * scale, cellH);
-  }
-
   if (opts.showGrid && scale >= 5) {
     ctx.lineWidth = 1;
     for (let c = c0; c <= c1 + 1; c++) {
@@ -88,10 +80,24 @@ export function drawBase(
     }
   }
 
+  // Working column: wash out everything else so the column being beaded
+  // stands out, then outline it.
+  const wc = opts.workColumn;
+  if (wc != null && wc >= 0 && wc < cols) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
+    ctx.fillRect(offX, offY, wc * scale, rows * cellH);
+    ctx.fillRect(offX + (wc + 1) * scale, offY, (cols - wc - 1) * scale, rows * cellH);
+  }
+
   // Outer border.
   ctx.strokeStyle = 'rgba(0,0,0,0.55)';
   ctx.lineWidth = 1.5;
   ctx.strokeRect(offX + 0.5, offY + 0.5, cols * scale, rows * cellH);
+  if (wc != null && wc >= 0 && wc < cols) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(offX + wc * scale, offY - 1, scale, rows * cellH + 2);
+  }
 
   if (opts.showRowNumbers && cellH >= 9) {
     ctx.fillStyle = 'rgba(0,0,0,0.62)';

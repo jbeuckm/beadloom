@@ -16,8 +16,16 @@ export default function App() {
   const showPrint = useStore((s) => s.showPrint);
 
   useEffect(() => {
-    const isTyping = (t: EventTarget | null) => {
+    // text entry owns the keyboard; sliders, checkboxes and colour wells
+    // don't (except a slider keeps its arrow keys)
+    const NON_TEXT = new Set(['range', 'checkbox', 'radio', 'color', 'button', 'file']);
+    const isTyping = (t: EventTarget | null, key = '') => {
       const el = t as HTMLElement | null;
+      if (el?.tagName === 'INPUT') {
+        const type = (el as HTMLInputElement).type;
+        if (type === 'range' && key.startsWith('Arrow')) return true;
+        if (NON_TEXT.has(type)) return false;
+      }
       return (
         !!el &&
         (el.tagName === 'INPUT' ||
@@ -28,7 +36,7 @@ export default function App() {
     };
 
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e.target)) return;
+      if (isTyping(e.target, e.key)) return;
       const s = useStore.getState();
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
@@ -63,9 +71,7 @@ export default function App() {
       }
       if (mod && k === 's') {
         e.preventDefault();
-        const name = s.design.meta.name.trim();
-        if (name && storage.listDesigns().includes(name)) s.saveToSlot(name);
-        else setDialog('saveas');
+        if (!s.quickSave()) setDialog('saveas');
         return;
       }
       if (mod) return;
@@ -93,6 +99,20 @@ export default function App() {
         s.setSelection(null);
         s.selectSelburose(null);
         s.selectShape(null);
+        return;
+      }
+
+      // stepping the working column when nothing is selected to nudge
+      if (
+        (k === 'arrowleft' || k === 'arrowright') &&
+        s.workColumn != null &&
+        !s.selectedSelburoseId &&
+        !s.selectedImageId &&
+        !s.selectedShapeId &&
+        !s.selection
+      ) {
+        e.preventDefault();
+        s.stepWorkColumn(k === 'arrowleft' ? -1 : 1);
         return;
       }
 

@@ -26,7 +26,7 @@ export const FILE_FORMAT_SPEC = `{
     "name": "My Pattern",
     "created": "2026-08-26T12:00:00.000Z",
     "modified": "2026-08-26T12:34:00.000Z",
-    "app": "BeadLoom Studio 1.0.0",
+    "app": "Grid Designer 1.0.0",
     "notes": "optional free text"
   },
   "loom": {

@@ -4,6 +4,7 @@ import {
   cellValue,
   dragCells,
   openFileMenu,
+  paletteColors,
   paletteHexes,
   pickTool,
   PX_PER_COL,
@@ -14,7 +15,7 @@ import {
 } from './helpers';
 
 /**
- * One long end-to-end pass that touches most of BeadLoom Studio's surface and
+ * One long end-to-end pass that touches most of Grid Designer's surface and
  * asserts the outcome of every step:
  *
  *   painting (pen / eraser)                    · shapes (line / rect / rectFill)
@@ -209,6 +210,7 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
 
   // === 11. Palette: add, edit, delete, background ===================
   await page.locator('.palette footer').getByRole('button', { name: '+ Color' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Add colour', exact: true }).click();
   await expect(page.locator('.swatch-row')).toHaveCount(11);
   expect((await snapshot(page)).activeColor).toBe(10); // new colour auto-selected
 
@@ -236,14 +238,26 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
   await rowInput.blur();
   expect((await snapshot(page)).rows).toBe(34);
 
-  await openFileMenu(page, /Resize Grid/);
+  await openFileMenu(page, /Grid Size & Type/);
   await page.locator('.modal .row2 input[type="number"]').first().fill('50');
   await page.locator('.modal .row2 input[type="number"]').nth(1).fill('30');
+  await page.locator('.modal').getByLabel('Square').check();
   await page.locator('.modal').getByRole('button', { name: 'Apply' }).click();
   {
     const s = await snapshot(page);
     expect(s.columns).toBe(50);
     expect(s.rows).toBe(30);
+    expect(s.cellAspect).toBe(1);
+    await expect(page.locator('.dim-est')).toHaveCount(0); // no physical size for a plain square grid
+  }
+  // back to the default so the cell-coordinate helpers below line up
+  await openFileMenu(page, /Grid Size & Type/);
+  await page.locator('.modal').getByLabel('11/0 seed beads').check();
+  await page.locator('.modal').getByRole('button', { name: 'Apply' }).click();
+  {
+    const s = await snapshot(page);
+    expect(s.cellAspect).toBe(0.8);
+    await expect(page.locator('.dim-est')).toContainText('in');
     expect(await cellValue(page, 4, 3)).toBe(8); // top-left content is anchored
   }
 
@@ -259,19 +273,45 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
     expect((await snapshot(page)).undo).toBe(u0);
   }
 
-  // === 14. Working-row highlight (left gutter tap) ==============
+  // === 14. Working column (tap a column number to bead by column) ===
   await pickTool(page, 'Pen');
-  await page.keyboard.press('0'); // fit, so the gutter sits at a predictable x
+  await page.keyboard.press('0'); // fit, so the top margin sits at a predictable y
   {
     const s = await snapshot(page);
     const box = await page.locator('.canvas-wrap canvas').boundingBox();
     const sc = PX_PER_COL * s.view.zoom;
-    const gx = box!.x + Math.max(4, s.view.panX - 8); // just left of column 0
-    const gy = box!.y + s.view.panY + (5 + 0.5) * sc * 0.8; // row 5 band
+    const gx = box!.x + s.view.panX + (4 + 0.5) * sc; // column 5 (index 4)
+    const gy = box!.y + Math.max(4, s.view.panY - 8); // just above row 1
     await page.mouse.click(gx, gy);
-    expect((await snapshot(page)).highlightRow).toBe(5);
-    await page.mouse.click(gx, gy); // tapping again clears it
-    expect((await snapshot(page)).highlightRow).toBeNull();
+    expect((await snapshot(page)).workColumn).toBe(4);
+    const bar = page.getByRole('region', { name: 'Working column' });
+    await expect(bar).toContainText(`Column 5 of ${s.columns}`);
+    // the column's beads, bottom to top, as runs that add up to the height
+    const runs = await bar.locator('.workcol-runs li').allTextContents();
+    expect(runs.map(Number).reduce((a, b) => a + b, 0)).toBe(s.rows);
+    const bottom = await cellValue(page, 4, s.rows - 1);
+    const first = bar.locator('.workcol-runs li').first();
+    // the first chip is the bottom row's bead
+    if (bottom < 0) await expect(first).toHaveClass(/empty/);
+    else await expect(first).toHaveAttribute('title', new RegExp(`× ${(await paletteColors(page))[bottom].name}`));
+
+    await page.keyboard.press('ArrowRight'); // step with the keyboard…
+    await bar.getByRole('button', { name: 'Next column' }).click(); // …or the bar
+    expect((await snapshot(page)).workColumn).toBe(6);
+    await bar.getByRole('button', { name: 'Previous column' }).click();
+    expect((await snapshot(page)).workColumn).toBe(5);
+
+    await page.mouse.click(gx + sc, gy); // tapping the working column's number again stops
+    expect((await snapshot(page)).workColumn).toBeNull();
+    await expect(bar).toHaveCount(0);
+
+    // hovering the numbers shows they're tappable; a Count button is the touch way in
+    await page.mouse.move(gx, gy);
+    await expect(page.locator('.canvas-wrap canvas')).toHaveCSS('cursor', 'pointer');
+    await page.getByRole('button', { name: 'Count', exact: true }).click();
+    expect((await snapshot(page)).workColumn).toBe(0);
+    await expect(page.getByRole('button', { name: 'Count', exact: true })).toHaveCount(0);
+    await bar.getByRole('button', { name: 'Stop beading by column' }).click();
   }
 
   // === 15. Zoom shortcuts ======================================
@@ -316,10 +356,8 @@ test('comprehensive: every major feature in a single session', async ({ page }) 
   }
 
   await openFileMenu(page, /⊟ Open/);
-  await page
-    .locator('.slot', { hasText: 'Feature Demo E2E' })
-    .getByRole('button', { name: 'Open' })
-    .click();
+  await page.locator('.fb-item', { hasText: 'Feature Demo E2E' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Open', exact: true }).click();
   {
     const s = await snapshot(page);
     expect(s.columns).toBe(50);

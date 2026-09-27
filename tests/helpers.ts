@@ -43,7 +43,7 @@ export async function snapshot(page: Page) {
       selection: s.selection,
       hasClipboard: !!s.clipboard,
       clipboard: s.clipboard ? { w: s.clipboard.w, h: s.clipboard.h } : null,
-      highlightRow: s.highlightRow,
+      workColumn: s.workColumn,
       settings: s.settings,
       layers: s.design.layers.map((l: any) => ({
         id: l.id,
@@ -91,6 +91,9 @@ export async function snapshot(page: Page) {
       undo: s.undoStack.length,
       redo: s.redoStack.length,
       name: s.design.meta.name,
+      slotPath: s.slotPath,
+      paletteSlotPath: s.paletteSlotPath,
+      brushSize: s.brushSize,
       view: s.view,
       format: s.design.format,
     };
@@ -128,7 +131,7 @@ export async function paletteColors(
 
 /** Open the Palette Library dialog from the palette panel header. */
 export async function openPaletteLibrary(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Library' }).click();
+  await page.getByRole('button', { name: 'Palettes', exact: true }).click();
   await page.locator('.modal', { hasText: 'Palette Library' }).waitFor();
 }
 
@@ -227,4 +230,28 @@ export async function pickTool(page: Page, label: string): Promise<void> {
 export async function openFileMenu(page: Page, itemText: string | RegExp): Promise<void> {
   await page.getByRole('button', { name: /^File/ }).click();
   await page.locator('.menu-item').filter({ hasText: itemText }).first().click();
+}
+
+/** An item in the open file browser (designs or palettes), matched by exact name. */
+export function browserItem(page: Page, name: string) {
+  return page
+    .locator('.modal .fb-main .fb-item')
+    .filter({ has: page.locator('.fb-name', { hasText: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`) }) });
+}
+
+/** Palette Library → Presets (→ maker folder) → apply `label`. Closes the dialog. */
+export async function applyPresetPalette(
+  page: Page,
+  label: string,
+  group = /^Toho/.test(label) ? 'Toho' : '',
+): Promise<void> {
+  await openPaletteLibrary(page);
+  await page.locator('.modal .fb-side-item', { hasText: 'Presets' }).click();
+  if (group) {
+    await browserItem(page, group).click();
+    await browserItem(page, group).click(); // double-click opens the folder
+  }
+  await browserItem(page, label).click();
+  await page.locator('.modal').getByRole('button', { name: 'Apply', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
 }

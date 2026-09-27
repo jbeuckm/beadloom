@@ -1,3 +1,5 @@
+import { Icon } from './icons';
+import WorkColumnBar from './WorkColumnBar';
 import type React from 'react';
 import {
   useCallback,
@@ -8,7 +10,7 @@ import {
 } from 'react';
 import { useStore } from '../store/useStore';
 import { drawBase } from '../lib/render';
-import { emptyGrid, linePoints, normRect } from '../lib/grid';
+import { brushOffsets, emptyGrid, linePoints, normRect } from '../lib/grid';
 import { compositeLayers } from '../lib/layers';
 import { rgbToLab, type Lab } from '../lib/color';
 import { adjustRgb, traceImageLayer } from '../lib/trace';
@@ -127,12 +129,13 @@ export default function LoomCanvas() {
   const designKey = useStore((s) => s.designKey);
   const fitNonce = useStore((s) => s.fitNonce);
   const tool = useStore((s) => s.tool);
+  const brushSize = useStore((s) => s.brushSize);
   const activeColor = useStore((s) => s.activeColor);
   const selection = useStore((s) => s.selection);
   const selectionMask = useStore((s) => s.selectionMask);
   const clipboard = useStore((s) => s.clipboard);
   const settings = useStore((s) => s.settings);
-  const highlightRow = useStore((s) => s.highlightRow);
+  const workColumn = useStore((s) => s.workColumn);
   const view = useStore((s) => s.view);
   const pasteMode = useStore((s) => s.pasteMode);
   const cursor = useStore((s) => s.cursor);
@@ -236,6 +239,7 @@ export default function LoomCanvas() {
         c: Math.floor((x - v.panX) / sc),
         r: Math.floor((y - v.panY) / (sc * asp)),
         localX: x,
+        localY: y,
       };
     },
     [asp],
@@ -270,7 +274,24 @@ export default function LoomCanvas() {
     paintRaf.current = false;
     const pts = pendingPaint.current;
     pendingPaint.current = [];
-    if (pts.length) S().paintCells(pts, strokeValue.current);
+    if (!pts.length) return;
+    const st = S();
+    if (st.brushSize <= 1) {
+      st.paintCells(pts, strokeValue.current);
+      return;
+    }
+    // stamp the round brush at every point of the stroke
+    const offs = brushOffsets(st.brushSize, st.design.loom.cellAspect);
+    const seen = new Set<number>();
+    const cells: Array<[number, number]> = [];
+    for (const [c, r] of pts)
+      for (const [dx, dy] of offs) {
+        const k = (r + dy) * 100000 + (c + dx);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        cells.push([c + dx, r + dy]);
+      }
+    st.paintCells(cells, strokeValue.current);
   }, []);
   const queuePaint = useCallback(
     (pts: Array<[number, number]>) => {
@@ -385,7 +406,7 @@ export default function LoomCanvas() {
     drawBase(ctx, design, composite, off, size.w, size.h, {
       showGrid: settings.showGrid,
       showRowNumbers: settings.showRowNumbers,
-      highlightRow,
+      workColumn,
     });
 
     const cellH = scale * asp;
@@ -713,9 +734,55 @@ export default function LoomCanvas() {
         tool === 'eyedropper')
     ) {
       ctx.save();
+      if ((tool === 'pen' || tool === 'eraser') && brushSize > 1) {
+        // the brush footprint
+        ctx.fillStyle = 'rgba(0,0,0,0.14)';
+        for (const [dx, dy] of brushOffsets(brushSize, asp)) {
+          const c = cursor.c + dx;
+          const r = cursor.r + dy;
+          if (c < 0 || r < 0 || c >= cols || r >= rows) continue;
+          ctx.fillRect(px(c), py(r), scale, cellH);
+        }
+      }
       ctx.strokeStyle = 'rgba(0,0,0,0.85)';
       ctx.lineWidth = 2;
       ctx.strokeRect(px(cursor.c) + 1, py(cursor.r) + 1, scale - 2, cellH - 2);
+      ctx.restore();
+    }
+
+    // hovering the column numbers: show that a tap counts that column
+    const overNumbers =
+      !!cursor && !drag && cursor.r < 0 && cursor.c >= 0 && cursor.c < cols;
+    canvas.style.cursor = overNumbers ? 'pointer' : '';
+    if (overNumbers) {
+      const c = cursor.c;
+      const stop = workColumn === c;
+      ctx.save();
+      if (!stop) {
+        ctx.fillStyle = 'rgba(18,104,255,0.12)';
+        ctx.fillRect(px(c), py(0), scale, rows * cellH);
+        ctx.strokeStyle = 'rgba(18,104,255,0.9)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(px(c), py(0), scale, rows * cellH);
+      }
+      const label = stop ? 'Stop counting' : `Count column ${c + 1}`;
+      ctx.font = '600 12px system-ui, -apple-system, sans-serif';
+      const w = ctx.measureText(label).width + 16;
+      const h = 22;
+      const cx = px(c) + scale / 2;
+      const x = clamp(cx - w / 2, 4, size.w - w - 4);
+      const y = Math.max(4, view.panY - h - 8);
+      ctx.fillStyle = '#1268ff';
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, 6);
+      ctx.moveTo(cx - 5, y + h);
+      ctx.lineTo(cx + 5, y + h);
+      ctx.lineTo(cx, y + h + 5);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, x + w / 2, y + h / 2 + 0.5);
       ctx.restore();
     }
   }, [
@@ -730,12 +797,13 @@ export default function LoomCanvas() {
     selectionMask,
     drag,
     settings,
-    highlightRow,
+    workColumn,
     activeColor,
     clipboard,
     pasteMode,
     cursor,
     tool,
+    brushSize,
     editingImage,
     refNonce,
     selectedSelburoseId,
@@ -772,7 +840,7 @@ export default function LoomCanvas() {
       return;
     }
 
-    const { c, r, localX } = toCell(e.clientX, e.clientY);
+    const { c, r, localX, localY } = toCell(e.clientX, e.clientY);
     const v = S().view;
     const d = S().design;
     const inb = c >= 0 && r >= 0 && c < d.loom.columns && r < d.loom.rows;
@@ -844,9 +912,9 @@ export default function LoomCanvas() {
       return;
     }
 
-    // left gutter tap -> set the working row highlight
-    if (localX < v.panX && r >= 0 && r < d.loom.rows) {
-      S().setHighlightRow(S().highlightRow === r ? null : r);
+    // tap above the grid (the column numbers) -> pick the working column
+    if (localY < v.panY && localX >= v.panX && c >= 0 && c < d.loom.columns) {
+      S().setWorkColumn(S().workColumn === c ? null : c);
       return;
     }
 
@@ -1435,6 +1503,23 @@ export default function LoomCanvas() {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       />
+      {workColumn == null && (
+        // touch has no hover: a visible way in, just above the grid's corner
+        // (clear of the column numbers), or pinned top-left when that's off-screen
+        <button
+          className="count-cue"
+          style={
+            view.panY > 56 && view.panY < size.h && view.panX > -40 && view.panX < size.w - 90
+              ? { left: Math.max(4, view.panX), top: view.panY - 24 }
+              : { left: 8, top: 38 }
+          }
+          title="Count beads column by column — or tap any column number"
+          onClick={() => S().setWorkColumn(0)}
+        >
+          <Icon name="list" size={13} /> Count
+        </button>
+      )}
+      <WorkColumnBar />
     </div>
   );
 }

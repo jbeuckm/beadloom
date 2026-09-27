@@ -173,27 +173,26 @@ export default function Toolbar() {
 
       <div className="sep" aria-hidden="true" />
 
+      {(s.tool === 'pen' || s.tool === 'eraser') && (
+        <SliderTool
+          label="Size"
+          aria="Brush size"
+          value={s.brushSize}
+          min={1}
+          max={20}
+          onChange={s.setBrushSize}
+        />
+      )}
+
       {showThickness && (
-        <div className="tool thickness" aria-label="Line thickness">
-          <div className="stepper">
-            <button
-              className="btn mini"
-              onClick={() => s.setLineThickness(thickness - 1)}
-              aria-label="Thinner"
-            >
-              −
-            </button>
-            <span>{thickness}</span>
-            <button
-              className="btn mini"
-              onClick={() => s.setLineThickness(thickness + 1)}
-              aria-label="Thicker"
-            >
-              +
-            </button>
-          </div>
-          <span className="lb">Weight</span>
-        </div>
+        <SliderTool
+          label="Weight"
+          aria="Line thickness"
+          value={thickness}
+          min={1}
+          max={20}
+          onChange={s.setLineThickness}
+        />
       )}
 
       <button
@@ -313,5 +312,43 @@ export default function Toolbar() {
         <span className="lb">Numbers</span>
       </button>
     </div>
+  );
+}
+
+/** A compact slider in the tool rail: "Size ——o 7". */
+function SliderTool({
+  label,
+  aria,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  aria: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (n: number) => void;
+}) {
+  const t = (value - min) / (max - min || 1);
+  return (
+    <label className="slider-tool">
+      <span className="lb">{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        aria-label={aria}
+        onChange={(e) => onChange(Number(e.target.value))}
+        // a drag hands the keyboard back (arrows nudge, keys pick tools);
+        // tabbing in keeps arrow-key control of the slider
+        onPointerUp={(e) => e.currentTarget.blur()}
+        style={{ ['--fill' as string]: `${t * 100}%` }}
+      />
+      <output className="slider-value">{value}</output>
+    </label>
   );
 }

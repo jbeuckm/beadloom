@@ -232,9 +232,50 @@ test('mirror horizontal flips the whole design', async ({ page }) => {
   expect(await cellValue(page, columns - 1 - 2, 5)).toBe(0);
 });
 
+test('pen and eraser: brush size paints and erases a round footprint', async ({ page }) => {
+  await pickTool(page, 'Pen');
+  const size = page.getByRole('slider', { name: 'Brush size' });
+  await expect(size).toHaveValue('1');
+
+  // size 2 = a 3-bead-wide disc: one tap covers the 3×3 block around the cell
+  await size.fill('2');
+  expect((await snapshot(page)).brushSize).toBe(2);
+  await tapCell(page, 10, 10);
+  expect((await snapshot(page)).beads).toBe(9);
+  for (const [c, r] of [[9, 9], [11, 11], [10, 9], [9, 11]]) expect(await cellValue(page, c, r)).toBe(0);
+  expect(await cellValue(page, 12, 10)).toBe(-1);
+
+  // a drag stamps the brush all along the stroke
+  await dragCells(page, [20, 10], [30, 10]);
+  expect(await cellValue(page, 25, 9)).toBe(0);
+  expect(await cellValue(page, 25, 11)).toBe(0);
+
+  // the eraser shares the size; a big one clears the whole first dab
+  await pickTool(page, 'Eraser');
+  await expect(size).toHaveValue('2');
+  await size.focus();
+  await page.keyboard.press('ArrowRight'); // the slider also steps by keyboard
+  await page.keyboard.press('ArrowRight');
+  expect((await snapshot(page)).brushSize).toBe(4);
+  await tapCell(page, 10, 10);
+  for (const [c, r] of [[9, 9], [11, 11], [10, 10]]) expect(await cellValue(page, c, r)).toBe(-1);
+  expect(await cellValue(page, 25, 10)).toBe(0); // the stroke is out of reach
+
+  // the size control only shows for pen / eraser
+  await pickTool(page, 'Fill');
+  await expect(size).toHaveCount(0);
+});
+
 test('palette: add and remove colours, remapping cells', async ({ page }) => {
+  // + Color opens the colour dialog; the Custom tab adds a picked colour
   await page.locator('.palette footer').getByRole('button', { name: '+ Color' }).click();
+  const dialog = page.locator('.modal', { hasText: 'Add Colour' });
+  await expect(dialog.getByRole('tab', { name: 'Custom' })).toHaveAttribute('aria-selected', 'true');
+  await dialog.locator('input[type="text"]').first().fill('Sea Foam');
+  await dialog.locator('input[type="color"]').fill('#71d6c0');
+  await dialog.getByRole('button', { name: 'Add colour', exact: true }).click();
   await expect(page.locator('.swatch-row')).toHaveCount(11);
+  expect((await paletteHexes(page))[10]).toBe('#71D6C0');
   expect((await snapshot(page)).activeColor).toBe(10); // newly added is selected
 
   // remove it again via the row editor
@@ -279,10 +320,8 @@ test('save to a slot, start a new design, then reopen the saved one', async ({ p
   expect((await snapshot(page)).beads).toBe(0);
 
   await openFileMenu(page, /⊟ Open/);
-  await page
-    .locator('.slot', { hasText: 'Regression Pattern' })
-    .getByRole('button', { name: 'Open' })
-    .click();
+  await page.locator('.fb-item', { hasText: 'Regression Pattern' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Open', exact: true }).click();
   expect((await snapshot(page)).beads).toBe(painted);
 });
 

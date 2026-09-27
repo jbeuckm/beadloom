@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
+  browserItem,
   cellValue,
   dragCells,
   openFileMenu,
@@ -126,13 +127,14 @@ test('guided walkthrough with screenshots', async ({ page }) => {
   await shot(page, '12-finished-pattern');
 
   // 13 — the Palette Library (Toho presets, saved palettes) ----
-  await page.getByRole('button', { name: 'Library' }).click();
-  await expect(page.locator('.modal')).toContainText('Toho Round 11/0');
+  await page.getByRole('button', { name: 'Palettes', exact: true }).click();
+  await page.locator('.modal .fb-side-item', { hasText: 'Presets' }).click();
+  await browserItem(page, 'Toho').click();
+  await browserItem(page, 'Toho').click();
+  await expect(page.locator('.modal')).toContainText('Toho Essentials');
   await shot(page, '13-palette-library');
-  await page
-    .locator('.modal .slot', { hasText: 'Toho Essentials' })
-    .getByRole('button', { name: 'Apply' })
-    .click();
+  await browserItem(page, 'Toho Essentials').click();
+  await page.locator('.modal').getByRole('button', { name: 'Apply', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
   await shot(page, '14-toho-palette');
 

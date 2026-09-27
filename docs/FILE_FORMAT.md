@@ -1,4 +1,4 @@
-# BeadLoom file formats
+# Grid Designer file formats
 
 Two JSON formats, both plain UTF-8 text and safe to hand-edit.
 
@@ -20,7 +20,7 @@ Two JSON formats, both plain UTF-8 text and safe to hand-edit.
     "name": "Thunderbird Band",
     "created":  "2026-08-26T15:04:00.000Z",  // ISO-8601
     "modified": "2026-08-26T15:40:12.512Z",
-    "app": "BeadLoom Studio 1.0.0",
+    "app": "Grid Designer 1.0.0",
     "notes": "optional; free text"            // optional key
   },
 

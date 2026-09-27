@@ -1,6 +1,6 @@
 {
-  "name": "BeadLoom Studio",
-  "short_name": "BeadLoom",
+  "name": "Grid Designer",
+  "short_name": "Grid Designer",
   "description": "iPad-first bead loom pattern designer",
   "id": "./",
   "start_url": "./",

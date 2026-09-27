@@ -47,7 +47,7 @@ import {
   serializeDesign,
   validateDesign,
 } from '../lib/designFormat';
-import { clamp, normalizeHex, randomPleasantHex, uid } from '../util';
+import { clamp, normalizeHex, uid } from '../util';
 import * as storage from '../lib/storage';
 
 const HISTORY_LIMIT = 60;
@@ -58,6 +58,7 @@ const MAX_ZOOM = 14;
 
 function freshDesign(opts?: {
   columns?: number;
+  cellAspect?: number;
   rows?: number;
   name?: string;
   palette?: Palette;
@@ -74,7 +75,7 @@ function freshDesign(opts?: {
       modified: now,
       app: `${APP_NAME} ${APP_VERSION}`,
     },
-    loom: { stitch: 'loom', columns, rows, cellAspect: 0.8 },
+    loom: { stitch: 'loom', columns, rows, cellAspect: opts?.cellAspect ?? 0.8 },
     palette: opts?.palette ?? makeRainbowPalette(10),
     background: '#FFFFFF',
     layers: [emptyRasterLayer('Layer 1', columns, rows)],
@@ -182,9 +183,10 @@ export interface StoreState {
   selectedShapeId: string | null;
   editingShape: string | null; // id of the line/box the Shape panel edits
   lineThickness: number; // default bead width for new line / box-outline shapes
+  brushSize: number; // pen / eraser radius in beads (1 = a single bead)
   rightPanel: RightPanelId | null; // the panel docked to the right edge
   showPrint: boolean; // the printable-sheet overlay is open
-  highlightRow: number | null;
+  workColumn: number | null; // the column being beaded: others wash out
   cursor: { c: number; r: number } | null;
   settings: Settings;
   view: { zoom: number; panX: number; panY: number };
@@ -192,6 +194,8 @@ export interface StoreState {
   undoStack: Snapshot[];
   redoStack: Snapshot[];
   dirty: boolean;
+  slotPath: string | null; // where the open design was last saved / opened from
+  paletteSlotPath: string | null; // the saved palette the current one came from
 
   // history
   pushHistory: () => void;
@@ -208,7 +212,9 @@ export interface StoreState {
   setSelection: (r: Rect | null) => void;
   selectAll: () => void;
   selectWand: (c: number, r: number) => void;
-  setHighlightRow: (r: number | null) => void;
+  setWorkColumn: (c: number | null) => void;
+  /** Step the working column by `d`, staying on the grid. */
+  stepWorkColumn: (d: number) => void;
   setShowPrint: (v: boolean) => void;
 
   // painting — callers push history once at the start of a stroke
@@ -284,6 +290,7 @@ export interface StoreState {
 
   // line / box / poly shape overlay objects
   setLineThickness: (n: number) => void;
+  setBrushSize: (n: number) => void;
   addShape: (p: Omit<ShapeObject, 'id'>) => void;
   openShapeEditor: (id: string) => void;
   closeShapeEditor: () => void;
@@ -303,6 +310,7 @@ export interface StoreState {
   // grid size — history managed by caller
   setColumns: (n: number) => void;
   setRows: (n: number) => void;
+  setCellAspect: (a: number) => void;
   clearAll: () => void;
   fillAll: () => void;
 
@@ -311,7 +319,8 @@ export interface StoreState {
   setNotes: (s: string) => void;
   setBackground: (hex: string) => void;
   setPaletteName: (s: string) => void;
-  addColor: () => void;
+  /** Append colours (e.g. picked from a maker library) as one undo step. */
+  addColors: (colors: Array<{ name: string; hex: string; code?: string }>) => void;
   updateColor: (
     id: string,
     patch: Partial<{ name: string; hex: string; code: string }>,
@@ -327,12 +336,20 @@ export interface StoreState {
     columns?: number;
     rows?: number;
     name?: string;
+    cellAspect?: number;
     keepPalette?: boolean;
   }) => void;
   loadDesignObject: (raw: unknown) => void;
   loadDesignText: (text: string) => void;
   exportJSON: () => string;
-  saveToSlot: (name: string) => void;
+  saveToSlot: (name: string, folder?: string) => void;
+  /** Save over the open design's file; false when it needs a Save As. */
+  quickSave: () => boolean;
+  /** Follow the open design's file after a library move / rename / trash. */
+  remapSlot: (map: Map<string, string>) => void;
+  setPaletteSlotPath: (path: string | null) => void;
+  /** Follow the current palette's saved file after a library change. */
+  remapPaletteSlot: (map: Map<string, string>) => void;
   loadFromSlot: (name: string) => void;
 
   // settings & view
@@ -429,9 +446,10 @@ export const useStore = create<StoreState>()(
     selectedShapeId: null,
     editingShape: null,
     lineThickness: 1,
+    brushSize: 1,
     rightPanel: null,
     showPrint: false,
-    highlightRow: null,
+    workColumn: null,
     cursor: null,
     settings: initialSettings,
     view: { zoom: 1, panX: 0, panY: 0 },
@@ -439,6 +457,8 @@ export const useStore = create<StoreState>()(
     undoStack: [],
     redoStack: [],
     dirty: false,
+    slotPath: null,
+    paletteSlotPath: null,
 
     pushHistory: () =>
       set((s) => {
@@ -534,7 +554,13 @@ export const useStore = create<StoreState>()(
         return { tool: 'wand', selection: { c0, r0, c1, r1 }, selectionMask: mask };
       }),
 
-    setHighlightRow: (r) => set({ highlightRow: r }),
+    setWorkColumn: (c) => set({ workColumn: c }),
+    stepWorkColumn: (d) =>
+      set((s) =>
+        s.workColumn == null
+          ? {}
+          : { workColumn: clamp(s.workColumn + d, 0, s.design.loom.columns - 1) },
+      ),
     setShowPrint: (v) => set({ showPrint: v }),
 
     paintCells: (cells, value) =>
@@ -1458,6 +1484,8 @@ export const useStore = create<StoreState>()(
     // ---- line / box shape overlay objects ---------------------------------
     // Drawing a line or box on the canvas drops one of these as its own layer;
     // it stays a live, re-editable vector until the user flattens it.
+    setBrushSize: (n) => set({ brushSize: Math.max(1, Math.min(20, Math.round(n))) }),
+
     setLineThickness: (n) =>
       set((s) => {
         const t = Math.max(1, Math.min(40, Math.round(n)));
@@ -1723,6 +1751,27 @@ export const useStore = create<StoreState>()(
         };
       }),
 
+    setCellAspect: (a) =>
+      set((s) => {
+        const asp = clamp(Math.round(a * 100) / 100, 0.3, 3);
+        const old = s.design.loom.cellAspect;
+        if (asp === old) return {};
+        // Image layers sit in column-units with rows scaled by the aspect; keep
+        // each one anchored to the same row as the grid stretches.
+        const k = asp / old;
+        return {
+          design: {
+            ...s.design,
+            loom: { ...s.design.loom, cellAspect: asp },
+            layers: s.design.layers.map((l) =>
+              l.kind === 'image' ? { ...l, y: l.y * k } : l,
+            ),
+          },
+          fitNonce: s.fitNonce + 1,
+          dirty: true,
+        };
+      }),
+
     setRows: (n) =>
       set((s) => {
         const rows = clamp(Math.round(n), 1, 1000);
@@ -1796,19 +1845,20 @@ export const useStore = create<StoreState>()(
         design: { ...s.design, palette: { ...s.design.palette, name } },
       })),
 
-    addColor: () => {
+    addColors: (colors) => {
+      if (!colors.length) return;
       get().pushHistory();
       set((s) => {
-        const color = makeColor(
-          randomPleasantHex(),
-          `Color ${s.design.palette.colors.length + 1}`,
-        );
+        const added = colors.map((c) => ({
+          ...makeColor(c.hex.toUpperCase(), c.name),
+          ...(c.code ? { code: c.code } : {}),
+        }));
         return {
           design: {
             ...s.design,
             palette: {
               ...s.design.palette,
-              colors: s.design.palette.colors.concat(color),
+              colors: s.design.palette.colors.concat(added),
             },
           },
           activeColor: s.design.palette.colors.length,
@@ -1940,6 +1990,7 @@ export const useStore = create<StoreState>()(
             layers,
           },
           activeColor: clamp(s.activeColor, 0, n - 1),
+          paletteSlotPath: null, // callers loading a saved palette set it after
           dirty: true,
         };
       });
@@ -1956,6 +2007,7 @@ export const useStore = create<StoreState>()(
           columns: opts?.columns,
           rows: opts?.rows,
           name: opts?.name,
+          cellAspect: opts?.cellAspect,
           palette,
         });
         return {
@@ -1979,8 +2031,10 @@ export const useStore = create<StoreState>()(
           lifeLayerId: null,
           pasteMode: false,
           activeColor: 0,
-          highlightRow: null,
+          workColumn: null,
           dirty: false,
+          slotPath: null,
+          paletteSlotPath: null,
         };
       }),
 
@@ -2008,8 +2062,10 @@ export const useStore = create<StoreState>()(
           lifeLayerId: null,
           pasteMode: false,
           activeColor: 0,
-          highlightRow: null,
+          workColumn: null,
           dirty: false,
+          slotPath: null,
+          paletteSlotPath: null,
         };
       }),
 
@@ -2017,17 +2073,58 @@ export const useStore = create<StoreState>()(
 
     exportJSON: () => serializeDesign(get().design),
 
-    saveToSlot: (name) => {
+    saveToSlot: (name, folder = '') => {
       const trimmed = name.trim();
       if (!trimmed) return;
       get().setName(trimmed);
-      storage.saveDesignSlot(trimmed, serializeDesign(get().design));
-      set({ dirty: false });
+      const path = storage.designPath(folder, storage.cleanSegment(trimmed));
+      storage.saveDesignSlot(path, serializeDesign(get().design));
+      set({ dirty: false, slotPath: path });
     },
 
-    loadFromSlot: (name) => {
-      const j = storage.loadDesignSlot(name);
-      if (j) get().loadDesignText(j);
+    quickSave: () => {
+      const s = get();
+      const name = s.design.meta.name.trim();
+      const folder = s.slotPath ? storage.splitDesignPath(s.slotPath).folder : '';
+      const path = storage.designPath(folder, storage.cleanSegment(name));
+      if (!name || !storage.listDesigns().includes(path)) return false;
+      s.saveToSlot(name, folder);
+      return true;
+    },
+
+    setPaletteSlotPath: (path) => set({ paletteSlotPath: path }),
+
+    remapPaletteSlot: (map) => {
+      const s = get();
+      if (!s.paletteSlotPath || !map.has(s.paletteSlotPath)) return;
+      const to = map.get(s.paletteSlotPath)!;
+      if (to.startsWith('.Trash/')) {
+        set({ paletteSlotPath: null });
+        return;
+      }
+      set({ paletteSlotPath: to });
+      const name = storage.splitDesignPath(to).name;
+      if (name !== s.design.palette.name) get().setPaletteName(name);
+    },
+
+    remapSlot: (map) => {
+      const s = get();
+      if (!s.slotPath || !map.has(s.slotPath)) return;
+      const to = map.get(s.slotPath)!;
+      if (to.startsWith('.Trash/')) {
+        set({ slotPath: null, dirty: true });
+        return;
+      }
+      set({ slotPath: to });
+      const name = storage.splitDesignPath(to).name;
+      if (name !== s.design.meta.name) get().setName(name);
+    },
+
+    loadFromSlot: (path) => {
+      const j = storage.loadDesignSlot(path);
+      if (!j) return;
+      get().loadDesignText(j);
+      set({ slotPath: path });
     },
 
     setSetting: (k, v) =>

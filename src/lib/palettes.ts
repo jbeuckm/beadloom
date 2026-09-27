@@ -1,6 +1,6 @@
 import type { BeadColor, Palette } from '../types';
 import { hslToHex, uid } from '../util';
-import { tohoEssentials, tohoFull } from './tohoPalettes';
+import { COLOR_LIBRARIES, essentialsPalette } from './colorLibraries';
 
 const RAINBOW_NAMES = [
   'Red',
@@ -36,11 +36,17 @@ export function makeColor(hex = '#8892A6', name = 'New Color'): BeadColor {
 export const PRESET_PALETTES: Array<{
   key: string;
   label: string;
+  group?: string; // the maker, shown as a folder inside Presets
   build: () => Palette;
 }> = [
   { key: 'rainbow', label: 'Rainbow 10', build: () => makeRainbowPalette(10) },
-  { key: 'toho-essentials', label: 'Toho Essentials', build: tohoEssentials },
-  { key: 'toho-full', label: 'Toho Round 11/0', build: tohoFull },
+  ...COLOR_LIBRARIES.flatMap((lib) => {
+    const ess = essentialsPalette(lib);
+    // whole lines are browsed colour by colour (From Library), not applied
+    return ess
+      ? [{ key: ess.id, label: ess.name, group: lib.maker, build: () => essentialsPalette(lib)! }]
+      : [];
+  }),
   {
     key: 'blank',
     label: 'Blank (1 colour)',

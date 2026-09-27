@@ -99,3 +99,24 @@ export function totalBeads(data: number[][]): number {
   for (const row of data) for (const v of row) if (v >= 0) n++;
   return n;
 }
+
+const brushCache = new Map<string, Array<[number, number]>>();
+/**
+ * Cell offsets covered by a round brush of `size` (a radius in beads: 1 is a
+ * single bead, 2 a 3-bead-wide disc…). Distances are measured on screen, with
+ * rows scaled by the cell aspect, so the brush looks round on the grid.
+ */
+export function brushOffsets(size: number, aspect: number): Array<[number, number]> {
+  const key = `${size}|${aspect}`;
+  const hit = brushCache.get(key);
+  if (hit) return hit;
+  const reach = size - 0.5; // column-units from the centre cell's middle
+  const rx = Math.ceil(reach);
+  const ry = Math.ceil(reach / (aspect || 1));
+  const out: Array<[number, number]> = [];
+  for (let dy = -ry; dy <= ry; dy++)
+    for (let dx = -rx; dx <= rx; dx++)
+      if (Math.hypot(dx, dy * aspect) <= reach) out.push([dx, dy]);
+  brushCache.set(key, out);
+  return out;
+}

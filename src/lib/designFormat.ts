@@ -67,6 +67,7 @@ export function validateDesign(raw: any): BeadDesign {
   const palette: Palette = {
     id: String(raw?.palette?.id ?? 'palette'),
     name: String(raw?.palette?.name ?? 'Palette'),
+    ...(typeof raw?.palette?.kind === 'string' ? { kind: raw.palette.kind } : {}),
     colors,
   };
 
@@ -216,11 +217,12 @@ export function serializePalette(p: Palette): string {
 export function parsePalette(text: string): Palette {
   const raw = JSON.parse(text);
   if (raw?.format !== PALETTE_FORMAT_ID)
-    throw new Error('Not a BeadLoom palette file.');
+    throw new Error('Not a Grid Designer palette file.');
   const colors = coerceColors(raw?.palette?.colors);
   return {
     id: String(raw?.palette?.id ?? 'palette'),
     name: String(raw?.palette?.name ?? 'Palette'),
+    ...(typeof raw?.palette?.kind === 'string' ? { kind: raw.palette.kind } : {}),
     colors,
   };
 }
@@ -288,7 +290,7 @@ export function exportPNG(design: BeadDesign, cellPx = 22): void {
     { scale: cellPx, offX: pad, offY: pad },
     w,
     h,
-    { showGrid: true, showRowNumbers: false, highlightRow: null },
+    { showGrid: true, showRowNumbers: false, workColumn: null },
   );
 
   canvas.toBlob((blob) => {

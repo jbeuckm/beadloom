@@ -3,7 +3,7 @@
 // See docs/FILE_FORMAT.md for the annotated specification.
 // ---------------------------------------------------------------------------
 
-export const APP_NAME = 'BeadLoom Studio';
+export const APP_NAME = 'Grid Designer';
 export const APP_VERSION = '1.0.0';
 
 export const FORMAT_ID = 'beadloom-design' as const;
@@ -28,6 +28,7 @@ export interface Palette {
   id: string;
   name: string;
   colors: BeadColor[]; // order matters: a cell value is an index into this array
+  kind?: string; // what the colours are, e.g. "Bead colours", "Yarn colours"
 }
 
 export interface LoomSpec {

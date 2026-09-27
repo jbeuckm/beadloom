@@ -1,4 +1,4 @@
-/* BeadLoom Studio service worker — dependency-free runtime cache.
+/* Grid Designer service worker — dependency-free runtime cache.
  *
  * - App shell (navigations) → network-first, falling back to a cached index.
  * - Static assets (same-origin GET) → stale-while-revalidate.

@@ -109,7 +109,7 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
     <div className="layer-panel dock-panel">
       <div className="layer-actions">
         <button
-          className="btn grow"
+          className="btn mini"
           onClick={s.addLayer}
           aria-label="Add layer"
           title="Add a new paintable layer"
@@ -117,7 +117,7 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
           <Icon name="plus" size={16} /> Layer
         </button>
         <button
-          className="btn"
+          className="btn mini"
           onClick={() => currentIdx >= 0 && s.duplicateLayer(currentId)}
           disabled={currentIdx < 0}
           title="Duplicate the current layer"
@@ -125,7 +125,7 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
           <Icon name="copy" size={16} /> Duplicate
         </button>
         <button
-          className="btn"
+          className="btn mini"
           onClick={() => currentIdx > 0 && s.mergeLayerDown(currentId)}
           disabled={currentIdx <= 0}
           title="Merge the current layer into the one below it"
@@ -215,7 +215,7 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
                   </span>
                 )}
                 <button
-                  className="btn mini danger"
+                  className="layer-del"
                   disabled={l.kind === 'raster' && onlyRaster}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -224,7 +224,7 @@ export default function LayerPanel({ onClose }: { onClose: () => void }) {
                   title="Delete layer"
                   aria-label="Delete layer"
                 >
-                  <Icon name="trash" size={15} />
+                  <Icon name="x" size={16} />
                 </button>
               </div>
             );

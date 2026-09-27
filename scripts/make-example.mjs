@@ -45,7 +45,7 @@ const design = {
     name: 'Spectrum Sampler',
     created: now,
     modified: now,
-    app: 'BeadLoom Studio 1.0.0',
+    app: 'Grid Designer 1.0.0',
     notes:
       'Auto-generated 30-colour sampler to exercise multi-colour editing, import and export.',
   },

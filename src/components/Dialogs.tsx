@@ -1,10 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import Modal from './Modal';
+import FileBrowser from './FileBrowser';
+import { designLibrary } from '../lib/library';
+import { Icon } from './icons';
 import type { DialogId } from './TopBar';
 import * as storage from '../lib/storage';
 import { pickTextFile } from '../lib/designFormat';
 import { FILE_FORMAT_SPEC, SHORTCUTS } from '../help';
+import { DEFAULT_GRID_TYPE, GRID_TYPES, gridTypeFor } from '../lib/gridTypes';
 
 export default function Dialogs({
   which,
@@ -29,16 +33,47 @@ const PRESETS: Array<[number, number]> = [
   [60, 120],
 ];
 
+/** Pick the kind of grid: each type fixes the cell aspect (height ÷ width). */
+function GridTypeField({
+  aspect,
+  onChange,
+}: {
+  aspect: number;
+  onChange: (a: number) => void;
+}) {
+  const current = gridTypeFor(aspect);
+  return (
+    <div className="field">
+      <label>Grid type</label>
+      {GRID_TYPES.map((t) => (
+        <label key={t.id} className="check">
+          <input
+            type="radio"
+            name="grid-type"
+            checked={current?.id === t.id}
+            onChange={() => onChange(t.cellAspect)}
+          />
+          {t.label}
+        </label>
+      ))}
+      {!current && (
+        <p className="hint">Custom cell aspect {aspect.toFixed(2)} (from file)</p>
+      )}
+    </div>
+  );
+}
+
 function NewDialog({ onClose }: { onClose: () => void }) {
   const newDesign = useStore((s) => s.newDesign);
   const [cols, setCols] = useState(100);
   const [rows, setRows] = useState(25);
   const [name, setName] = useState('Untitled Pattern');
   const [keepPalette, setKeepPalette] = useState(true);
+  const [aspect, setAspect] = useState(DEFAULT_GRID_TYPE.cellAspect);
 
   // The unsaved-changes prompt already happened before this dialog opened.
   const create = () => {
-    newDesign({ columns: cols, rows, name, keepPalette });
+    newDesign({ columns: cols, rows, name, cellAspect: aspect, keepPalette });
     onClose();
   };
 
@@ -70,6 +105,7 @@ function NewDialog({ onClose }: { onClose: () => void }) {
           />
         </div>
       </div>
+      <GridTypeField aspect={aspect} onChange={setAspect} />
       <div className="preset-grid">
         {PRESETS.map(([c, r]) => (
           <button
@@ -108,8 +144,9 @@ function ResizeDialog({ onClose }: { onClose: () => void }) {
   const s = useStore();
   const [cols, setCols] = useState(s.design.loom.columns);
   const [rows, setRows] = useState(s.design.loom.rows);
+  const [aspect, setAspect] = useState(s.design.loom.cellAspect);
   return (
-    <Modal title="Resize Grid" onClose={onClose}>
+    <Modal title="Grid" onClose={onClose}>
       <p className="hint">
         Existing beads stay anchored to the top-left. Growing adds empty cells;
         shrinking trims from the right / bottom.
@@ -136,6 +173,7 @@ function ResizeDialog({ onClose }: { onClose: () => void }) {
           />
         </div>
       </div>
+      <GridTypeField aspect={aspect} onChange={setAspect} />
       <div className="actions">
         <button className="btn" onClick={onClose}>
           Cancel
@@ -146,6 +184,7 @@ function ResizeDialog({ onClose }: { onClose: () => void }) {
             s.pushHistory();
             s.setColumns(cols);
             s.setRows(rows);
+            s.setCellAspect(aspect);
             onClose();
           }}
         >
@@ -156,117 +195,79 @@ function ResizeDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function SaveAsDialog({ onClose }: { onClose: () => void }) {
+/** The Finder-style browser over saved designs, for Open and Save As. */
+function DesignBrowser({ mode, onClose }: { mode: 'open' | 'save'; onClose: () => void }) {
   const s = useStore();
-  const [name, setName] = useState(s.design.meta.name || 'Untitled Pattern');
-  const exists = storage.listDesigns().includes(name.trim());
   return (
-    <Modal title="Save Design" onClose={onClose}>
-      <div className="field">
-        <label>Name (saved in this browser)</label>
-        <input
-          type="text"
-          value={name}
-          autoFocus
-          onChange={(e) => setName(e.target.value)}
-        />
-      </div>
-      {exists && <p className="hint">A design with this name will be overwritten.</p>}
-      <div className="actions">
-        <button className="btn" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="btn primary"
-          disabled={!name.trim()}
-          onClick={() => {
-            s.saveToSlot(name);
-            onClose();
-          }}
-        >
-          Save
-        </button>
-      </div>
+    <FileBrowser
+      col={designLibrary}
+      mode={mode}
+      prefsKey={storage.BKEY}
+      typeHeader="Grid type"
+      currentPath={s.slotPath}
+      initialName={s.design.meta.name || 'Untitled Pattern'}
+      onOpen={(e) => s.loadFromSlot(e.path)}
+      onSave={(name, folder) => {
+        s.saveToSlot(name, folder);
+        return useStore.getState().slotPath ?? '';
+      }}
+      onRemap={s.remapSlot}
+      onClose={onClose}
+      footer={
+        mode === 'open' && (
+          <>
+            {storage.readAutosave() && (
+              <button
+                className="btn"
+                onClick={() => {
+                  const j = storage.readAutosave();
+                  if (j) {
+                    try {
+                      s.loadDesignText(j);
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                  onClose();
+                }}
+              >
+                Restore last autosave
+              </button>
+            )}
+            <button
+              className="btn"
+              onClick={async () => {
+                const f = await pickTextFile();
+                if (!f) return;
+                try {
+                  s.loadDesignText(f.text);
+                  onClose();
+                } catch (err) {
+                  alert('Could not import:\n' + (err as Error).message);
+                }
+              }}
+            >
+              Import from file…
+            </button>
+          </>
+        )
+      }
+    />
+  );
+}
+
+function SaveAsDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal title="Save Design" onClose={onClose} wide>
+      <DesignBrowser mode="save" onClose={onClose} />
     </Modal>
   );
 }
 
 function OpenDialog({ onClose }: { onClose: () => void }) {
-  const s = useStore();
-  const [tick, setTick] = useState(0);
-  const names = useMemo(() => storage.listDesigns(), [tick]);
-  const hasAuto = !!storage.readAutosave();
-
   return (
-    <Modal title="Open Design" onClose={onClose}>
-      {names.length === 0 && (
-        <p className="hint">No saved designs yet. Use “Save As…” to create one.</p>
-      )}
-      <div className="slot-list">
-        {names.map((n) => (
-          <div className="slot" key={n}>
-            <span className="nm">{n}</span>
-            <button
-              className="btn mini"
-              onClick={() => {
-                s.loadFromSlot(n);
-                onClose();
-              }}
-            >
-              Open
-            </button>
-            <button
-              className="btn mini danger"
-              onClick={() => {
-                if (confirm(`Delete "${n}"?`)) {
-                  storage.deleteDesignSlot(n);
-                  setTick((t) => t + 1);
-                }
-              }}
-            >
-              🗑
-            </button>
-          </div>
-        ))}
-      </div>
-      <div className="actions">
-        {hasAuto && (
-          <button
-            className="btn"
-            onClick={() => {
-              const j = storage.readAutosave();
-              if (j) {
-                try {
-                  s.loadDesignText(j);
-                } catch {
-                  /* ignore */
-                }
-              }
-              onClose();
-            }}
-          >
-            Restore last autosave
-          </button>
-        )}
-        <button
-          className="btn"
-          onClick={async () => {
-            const f = await pickTextFile();
-            if (!f) return;
-            try {
-              s.loadDesignText(f.text);
-              onClose();
-            } catch (err) {
-              alert('Could not import:\n' + (err as Error).message);
-            }
-          }}
-        >
-          Import from file…
-        </button>
-        <button className="btn primary" onClick={onClose}>
-          Done
-        </button>
-      </div>
+    <Modal title="Open Design" onClose={onClose} wide>
+      <DesignBrowser mode="open" onClose={onClose} />
     </Modal>
   );
 }

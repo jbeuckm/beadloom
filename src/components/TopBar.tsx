@@ -5,11 +5,9 @@ import Menu, { MenuItem } from './Menu';
 import { Icon } from './icons';
 import { downloadText, exportPNG, pickTextFile } from '../lib/designFormat';
 import * as storage from '../lib/storage';
+import { gridTypeFor } from '../lib/gridTypes';
 
 export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help';
-
-/** ~11/0 seed beads: 74 columns is about 6 inches, so one column ≈ this. */
-const IN_PER_COL = 6 / 74;
 
 /** Press-and-hold auto-repeat for the ± steppers, one history entry per hold. */
 function useHoldRepeat(step: () => void, onStart?: () => void) {
@@ -66,7 +64,7 @@ function SizeField({ axis }: { axis: 'columns' | 'rows' }) {
   };
 
   return (
-    <>
+    <span className="dim-field">
       <button
         className="dim-step"
         title={`Fewer ${noun}`}
@@ -100,14 +98,16 @@ function SizeField({ axis }: { axis: 'columns' | 'rows' }) {
       >
         +
       </button>
-    </>
+    </span>
   );
 }
 
 function LoomSize() {
   const columns = useStore((s) => s.design.loom.columns);
-  const inW = columns * IN_PER_COL;
-  const est = inW < 9.95 ? inW.toFixed(1) : Math.round(inW).toString();
+  const type = useStore((s) => gridTypeFor(s.design.loom.cellAspect));
+  const inW = type?.inPerCol ? columns * type.inPerCol : null;
+  const est =
+    inW === null ? null : inW < 9.95 ? inW.toFixed(1) : Math.round(inW).toString();
 
   return (
     <div className="dim-group">
@@ -117,12 +117,14 @@ function LoomSize() {
         ×
       </span>
       <SizeField axis="rows" />
-      <span
-        className="dim-est"
-        title="Approximate length along the columns with 11/0 seed beads (about 74 columns per 6 in)"
-      >
-        ≈ {est} in
-      </span>
+      {est !== null && (
+        <span
+          className="dim-est"
+          title={`Approximate length along the columns with ${type!.label}`}
+        >
+          ≈ {est} in
+        </span>
+      )}
     </div>
   );
 }
@@ -131,9 +133,7 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
   const s = useStore();
 
   const quickSave = () => {
-    const name = s.design.meta.name.trim();
-    if (name && storage.listDesigns().includes(name)) s.saveToSlot(name);
-    else onDialog('saveas');
+    if (!s.quickSave()) onDialog('saveas');
   };
 
   const importDesign = async () => {
@@ -149,7 +149,7 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
   return (
     <div className="topbar">
       <div className="brand">
-        BeadLoom <small>Studio</small>
+        Grid <small>Designer</small>
       </div>
 
       <Menu
@@ -209,7 +209,7 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
             </MenuItem>
             <div className="menu-sep" />
             <MenuItem onClick={() => onDialog('resize')} close={close}>
-              ◆ Resize Grid…
+              ◆ Grid Size & Type…
             </MenuItem>
             <div className="menu-sep" />
             <MenuItem

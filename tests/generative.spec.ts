@@ -284,8 +284,10 @@ test('Shapes: line / box become live layers with thickness, then flatten', async
   expect(s.selectedShapeId).toBe(s.shapes[0].id);
 
   // --- thicken it from the toolbar -> more beads, still a vector ---------
-  await toolButton(page, 'Weight').getByRole('button', { name: 'Thicker' }).click();
-  await toolButton(page, 'Weight').getByRole('button', { name: 'Thicker' }).click();
+  const weight = page.getByRole('slider', { name: 'Line thickness' });
+  await expect(weight).toHaveValue('1');
+  await weight.fill('3');
+  await weight.blur(); // as releasing a drag does
   s = await snapshot(page);
   expect(s.shapes[0].thickness).toBe(3);
   expect(s.beads).toBeGreaterThan(20);

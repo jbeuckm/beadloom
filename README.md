@@ -1,4 +1,4 @@
-# BeadLoom Studio
+# Grid Designer
 
 An iPad-first pattern designer for **bead loom work** — React + TypeScript, no backend.
 Everything (autosave, saved designs, saved palettes) lives in the browser.
@@ -36,8 +36,9 @@ on a loom.
   real Toho colour numbers) — plus every palette you've saved in the browser, and
   import / export as `*.beadloom-palette.json`.
 - **Per-colour bead counts** shown on each swatch (a "word chart" style report).
-- **Working-row highlight**: tap a row number in the left gutter to mark where
-  you are while beading.
+- **Bead by column**: tap a column number above the grid to wash out every other
+  column; step with ‹ › (or ← →) while a bar lists that column's beads bottom
+  to top.
 - **Undo / redo** (60 steps), pinch-zoom & two-finger pan, Apple-Pencil-only mode
   for palm rejection.
 - **Designs**: New / Save / Open (in-browser slots) plus **Import / Export** as a

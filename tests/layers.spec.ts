@@ -95,10 +95,10 @@ test('layers: create, paint, hide, reorder, rename, delete', async ({ page }) =>
   expect(s.layers.some((l) => l.name === 'Sky')).toBe(true);
 
   // delete a raster layer; the last one can't be deleted
-  await rows(page).first().locator('.btn.danger').click();
+  await rows(page).first().getByRole('button', { name: 'Delete layer' }).click();
   s = await snapshot(page);
   expect(s.layers).toHaveLength(1);
-  await expect(rows(page).first().locator('.btn.danger')).toBeDisabled();
+  await expect(rows(page).first().getByRole('button', { name: 'Delete layer' })).toBeDisabled();
 });
 
 test('layers: duplicate a layer and merge one into the layer below', async ({

@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import Modal from './Modal';
-import type { Palette } from '../types';
+import FileBrowser, { type VirtualLocation } from './FileBrowser';
 import { PRESET_PALETTES } from '../lib/palettes';
 import {
   downloadText,
@@ -10,55 +10,43 @@ import {
   serializePalette,
 } from '../lib/designFormat';
 import * as storage from '../lib/storage';
+import { describePalette, paletteLibrary, stampPaletteJson } from '../lib/library';
 
-function Preview({ palette }: { palette: Palette }) {
-  return (
-    <span className="pal-swatches" aria-hidden="true">
-      {palette.colors.slice(0, 14).map((c) => (
-        <i key={c.id} style={{ background: c.hex }} />
-      ))}
-    </span>
-  );
-}
-
+/**
+ * Saved palettes in the same Finder-style browser as designs: folders, Trash,
+ * rename / move / duplicate, plus the built-in presets as a read-only
+ * location you can apply from or copy out of.
+ */
 export default function PaletteLibrary({ onClose }: { onClose: () => void }) {
   const palette = useStore((s) => s.design.palette);
+  const paletteSlotPath = useStore((s) => s.paletteSlotPath);
   const applyPalette = useStore((s) => s.applyPalette);
+  const setPaletteSlotPath = useStore((s) => s.setPaletteSlotPath);
+  const setPaletteName = useStore((s) => s.setPaletteName);
+  const remapPaletteSlot = useStore((s) => s.remapPaletteSlot);
 
-  const [tick, setTick] = useState(0);
-  const saved = useMemo(() => storage.listPalettes(), [tick]);
-  const [saveName, setSaveName] = useState(palette.name.trim() || 'My Palette');
-
-  const presets = useMemo(
-    () => PRESET_PALETTES.map((p) => ({ ...p, palette: p.build() })),
-    [],
-  );
-
-  const use = (p: Palette) => {
-    applyPalette(p);
-    onClose();
-  };
-
-  const load = (name: string) => {
-    const json = storage.loadPaletteSlot(name);
-    if (!json) return;
-    try {
-      applyPalette(parsePalette(json));
-      onClose();
-    } catch (err) {
-      alert('Could not load palette:\n' + (err as Error).message);
-    }
-  };
-
-  const saveCurrent = () => {
-    const name = saveName.trim();
-    if (!name) return;
-    storage.savePaletteSlot(
-      name,
-      serializePalette({ ...palette, name }),
-    );
-    setTick((t) => t + 1);
-  };
+  const presets = useMemo<VirtualLocation>(() => {
+    const built = PRESET_PALETTES.map((p) => ({
+      key: p.key,
+      label: p.label,
+      group: p.group ?? '',
+      json: serializePalette({ ...p.build(), name: p.label }),
+    }));
+    return {
+      label: 'Presets',
+      icon: 'swatches',
+      entries: () =>
+        built.map((p) => ({
+          kind: 'file' as const,
+          path: p.key,
+          folder: p.group,
+          name: p.label,
+          meta: describePalette(p.json),
+          readonly: true,
+        })),
+      load: (path) => built.find((p) => p.key === path)?.json ?? null,
+    };
+  }, []);
 
   const importFile = async () => {
     const f = await pickTextFile();
@@ -72,82 +60,57 @@ export default function PaletteLibrary({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal title="Palette Library" onClose={onClose}>
-      <h3>Presets</h3>
-      <div className="slot-list">
-        {presets.map((p) => (
-          <div className="slot" key={p.key}>
-            <Preview palette={p.palette} />
-            <span className="nm">
-              {p.label}
-              <small className="hint"> · {p.palette.colors.length}</small>
-            </span>
-            <button className="btn mini" onClick={() => use(p.palette)}>
-              Apply
-            </button>
-          </div>
-        ))}
-      </div>
-
-      <h3>Saved in this browser</h3>
-      {saved.length === 0 && (
-        <p className="hint">Save the current palette below to reuse it in other designs.</p>
-      )}
-      <div className="slot-list">
-        {saved.map((n) => (
-          <div className="slot" key={n}>
-            <span className="nm">{n}</span>
-            <button className="btn mini" onClick={() => load(n)}>
-              Load
+    <Modal title="Palette Library" onClose={onClose} wide>
+      <FileBrowser
+        col={paletteLibrary}
+        mode="library"
+        prefsKey={storage.PBKEY}
+        typeHeader="Kind"
+        openLabel="Apply"
+        saveLabel="Save current palette as:"
+        currentPath={paletteSlotPath}
+        initialName={palette.name.trim() || 'My Palette'}
+        virtual={presets}
+        onOpen={(entry, json) => {
+          try {
+            applyPalette(parsePalette(json));
+          } catch (err) {
+            alert('Could not load palette:\n' + (err as Error).message);
+            return false;
+          }
+          setPaletteSlotPath(entry.readonly ? null : entry.path);
+        }}
+        onSave={(name, folder) => {
+          const path = paletteLibrary.save(
+            folder,
+            name,
+            stampPaletteJson(serializePalette({ ...palette, name })),
+          );
+          setPaletteName(name.trim());
+          setPaletteSlotPath(path);
+          return path;
+        }}
+        onRemap={remapPaletteSlot}
+        onClose={onClose}
+        footer={
+          <>
+            <button className="btn" onClick={importFile}>
+              Import file…
             </button>
             <button
-              className="btn mini danger"
-              aria-label={`Delete palette ${n}`}
-              onClick={() => {
-                if (confirm(`Delete palette "${n}"?`)) {
-                  storage.deletePaletteSlot(n);
-                  setTick((t) => t + 1);
-                }
-              }}
+              className="btn"
+              onClick={() =>
+                downloadText(
+                  `${palette.name || 'palette'}.beadloom-palette.json`,
+                  serializePalette(palette),
+                )
+              }
             >
-              Delete
+              Export file…
             </button>
-          </div>
-        ))}
-      </div>
-
-      <h3>Save current palette</h3>
-      <div className="save-row">
-        <input
-          type="text"
-          value={saveName}
-          aria-label="Save palette as"
-          onChange={(e) => setSaveName(e.target.value)}
-        />
-        <button className="btn" disabled={!saveName.trim()} onClick={saveCurrent}>
-          Save
-        </button>
-      </div>
-
-      <div className="actions">
-        <button className="btn" onClick={importFile}>
-          Import file…
-        </button>
-        <button
-          className="btn"
-          onClick={() =>
-            downloadText(
-              `${palette.name || 'palette'}.beadloom-palette.json`,
-              serializePalette(palette),
-            )
-          }
-        >
-          Export file…
-        </button>
-        <button className="btn primary" onClick={onClose}>
-          Done
-        </button>
-      </div>
+          </>
+        }
+      />
     </Modal>
   );
 }
