@@ -9,9 +9,13 @@ import type {
   CloudBackend,
   CloudUser,
   FolderRow,
+  Friend,
   ItemRow,
+  Profile,
+  Reactions,
   TrashOriginRow,
 } from './backend';
+import { USERNAME_RE } from './backend';
 import { REQUIRED_SCHEMA_VERSION } from './schema';
 
 const KEY = 'beadloom.fakeCloud';
@@ -19,10 +23,15 @@ const SESSION = 'beadloom.fakeCloud.session';
 
 interface Server {
   users: Array<CloudUser & { password: string }>;
-  items: Array<ItemRow & { owner_id: string }>;
+  items: Array<ItemRow & { owner_id: string; published?: boolean; published_at?: string | null }>;
   folders: Array<FolderRow & { owner_id: string }>;
   trash: Array<TrashOriginRow & { owner_id: string }>;
   resets: Array<{ token: string; email: string }>;
+  profiles?: Array<{ user_id: string; username: string; avatar?: string | null }>;
+  friendships?: Array<{ requester: string; addressee: string; accepted: boolean }>;
+  shares?: Array<{ item_id: string; grantee_id: string }>;
+  reactions?: Array<{ item_id: string; user_id: string; liked: boolean; stars: number | null }>;
+  comments?: Array<{ id: string; item_id: string; author_id: string; body: string; created_at: string }>;
   /** Simulated outage: every request fails while set. */
   offline: boolean;
   /** Pretend the database is at this migration (default: current). */
@@ -38,6 +47,30 @@ const load = (): Server => {
   }
   return { users: [], items: [], folders: [], trash: [], resets: [], offline: false };
 };
+/** The newer tables, for a server saved before they existed. */
+const people = (s: Server) => {
+  s.profiles ??= [];
+  s.friendships ??= [];
+  s.shares ??= [];
+  s.reactions ??= [];
+  s.comments ??= [];
+  return s as Server & Required<Pick<Server, 'profiles' | 'friendships' | 'shares' | 'reactions' | 'comments'>>;
+};
+/** What private.can_see() allows: published designs, my own, shared with me. */
+const canSee = (s: Server, itemId: string, uid: string | null) => {
+  const i = s.items.find((x) => x.id === itemId);
+  if (!i || i.deleted_at) return false;
+  if (i.published && i.collection === 'design') return true;
+  if (!uid) return false;
+  return (
+    i.owner_id === uid ||
+    (people(s).shares.some((sh) => sh.item_id === itemId && sh.grantee_id === uid) && areFriends(s, i.owner_id, uid))
+  );
+};
+const areFriends = (s: Server, a: string, b: string) =>
+  people(s).friendships.some(
+    (f) => f.accepted && ((f.requester === a && f.addressee === b) || (f.requester === b && f.addressee === a)),
+  );
 const save = (s: Server) => localStorage.setItem(KEY, JSON.stringify(s));
 
 export function createFakeBackend(): CloudBackend & {
@@ -143,7 +176,7 @@ export function createFakeBackend(): CloudBackend & {
       const id = me();
       return load()
         .items.filter((r) => r.owner_id === id && (!since || r.modified > since || (r.deleted_at ?? '') > since))
-        .map(({ owner_id: _o, ...r }) => r);
+        .map(({ owner_id: _o, published: _p, published_at: _pa, ...r }) => r);
     },
     async upsertItems(rows) {
       guard();
@@ -151,7 +184,8 @@ export function createFakeBackend(): CloudBackend & {
       const s = load();
       for (const row of rows) {
         const i = s.items.findIndex((r) => r.id === row.id && r.owner_id === id);
-        const next = { ...row, owner_id: id };
+        // like the Data API's upsert: columns not sent (published) are kept
+        const next = { ...(i >= 0 ? s.items[i] : {}), ...row, owner_id: id };
         if (i >= 0) s.items[i] = next;
         else s.items.push(next);
       }
@@ -213,6 +247,278 @@ export function createFakeBackend(): CloudBackend & {
         (r) => !(r.owner_id === id && rows.some((x) => x.collection === r.collection && x.path === r.path)),
       );
       save(s);
+    },
+
+    // ---- people ----------------------------------------------------------
+    async myProfile() {
+      guard();
+      const id = me();
+      const p = people(load()).profiles.find((x) => x.user_id === id);
+      return p ? { id: p.user_id, username: p.username, avatar: p.avatar ?? null } : null;
+    },
+    async setAvatar(avatar) {
+      guard();
+      const id = me();
+      const s = people(load());
+      const p = s.profiles.find((x) => x.user_id === id);
+      if (!p) return { ok: false, error: 'Pick a username first' };
+      p.avatar = avatar;
+      save(s);
+      return { ok: true };
+    },
+    async setUsername(username) {
+      guard();
+      const id = me();
+      const name = username.trim().toLowerCase();
+      if (!USERNAME_RE.test(name)) return { ok: false, error: 'Use 3–24 letters, digits or underscores' };
+      const s = people(load());
+      if (s.profiles.some((x) => x.username === name && x.user_id !== id)) return { ok: false, error: `“${name}” is taken` };
+      const p = s.profiles.find((x) => x.user_id === id);
+      if (p) p.username = name;
+      else s.profiles.push({ user_id: id, username: name });
+      save(s);
+      return { ok: true };
+    },
+    async searchUsers(prefix) {
+      guard();
+      const id = me();
+      const q = prefix.trim().toLowerCase();
+      if (!q) return [];
+      return people(load())
+        .profiles.filter((x) => x.user_id !== id && x.username.startsWith(q))
+        .sort((a, b) => a.username.localeCompare(b.username))
+        .slice(0, 20)
+        .map((x) => ({ id: x.user_id, username: x.username, avatar: x.avatar ?? null }));
+    },
+    async friends() {
+      guard();
+      const id = me();
+      const s = people(load());
+      const out: Friend[] = [];
+      for (const f of s.friendships) {
+        if (f.requester !== id && f.addressee !== id) continue;
+        const other = f.requester === id ? f.addressee : f.requester;
+        const p = s.profiles.find((x) => x.user_id === other);
+        if (p)
+          out.push({
+            user: { id: other, username: p.username, avatar: p.avatar ?? null },
+            status: f.accepted ? 'friends' : f.requester === id ? 'outgoing' : 'incoming',
+          });
+      }
+      return out.sort((a, b) => a.user.username.localeCompare(b.user.username));
+    },
+    async requestFriend(userId) {
+      guard();
+      const id = me();
+      const s = people(load());
+      if (!s.profiles.some((x) => x.user_id === id)) return { ok: false, error: 'Pick a username first' };
+      if (s.friendships.some((f) => [f.requester, f.addressee].includes(id) && [f.requester, f.addressee].includes(userId)))
+        return { ok: false, error: 'You already have a friend request with them' };
+      s.friendships.push({ requester: id, addressee: userId, accepted: false });
+      save(s);
+      return { ok: true };
+    },
+    async acceptFriend(userId) {
+      guard();
+      const id = me();
+      const s = people(load());
+      for (const f of s.friendships) if (f.requester === userId && f.addressee === id) f.accepted = true;
+      save(s);
+    },
+    async removeFriend(userId) {
+      guard();
+      const id = me();
+      const s = people(load());
+      const pair = [id, userId];
+      s.friendships = s.friendships.filter((f) => !(pair.includes(f.requester) && pair.includes(f.addressee)));
+      // unfriending takes back shares both ways (a trigger, on Neon)
+      s.shares = s.shares.filter((sh) => {
+        const owner = s.items.find((i) => i.id === sh.item_id)?.owner_id;
+        return !(pair.includes(sh.grantee_id) && owner && pair.includes(owner) && owner !== sh.grantee_id);
+      });
+      save(s);
+    },
+
+    // ---- sharing ---------------------------------------------------------
+    async gallery(limit) {
+      guard();
+      const s = people(load());
+      const name = (uid: string): Profile | null => {
+        const p = sessionUser && s.profiles.find((x) => x.user_id === uid);
+        return p ? { id: uid, username: p.username, avatar: p.avatar ?? null } : null;
+      };
+      return s.items
+        .filter((i) => i.published && i.collection === 'design' && !i.deleted_at)
+        .sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''))
+        .slice(0, limit)
+        .map((i) => ({ id: i.id, doc: i.doc, publishedAt: i.published_at ?? '', owner: name(i.owner_id) }));
+    },
+    async sharedWithMe() {
+      guard();
+      const id = me();
+      const s = people(load());
+      return s.shares
+        .filter((sh) => sh.grantee_id === id)
+        .map((sh) => s.items.find((i) => i.id === sh.item_id))
+        .filter((i): i is NonNullable<typeof i> => !!i && !i.deleted_at && areFriends(s, i.owner_id, id))
+        .map((i) => {
+          const p = s.profiles.find((x) => x.user_id === i.owner_id);
+          return {
+            id: i.id,
+            collection: i.collection,
+            path: i.path,
+            doc: i.doc,
+            modified: i.modified,
+            owner: p ? { id: i.owner_id, username: p.username, avatar: p.avatar ?? null } : null,
+          };
+        });
+    },
+    async sharing(itemId) {
+      guard();
+      const id = me();
+      const s = people(load());
+      const item = s.items.find((i) => i.id === itemId && i.owner_id === id);
+      return {
+        published: !!item?.published,
+        friendIds: item ? s.shares.filter((sh) => sh.item_id === itemId).map((sh) => sh.grantee_id) : [],
+      };
+    },
+    async setPublished(itemId, published) {
+      guard();
+      const id = me();
+      const s = load();
+      for (const i of s.items)
+        if (i.id === itemId && i.owner_id === id) {
+          i.published = published;
+          i.published_at = published ? new Date().toISOString() : null;
+        }
+      save(s);
+    },
+    async myVisibleDesigns() {
+      guard();
+      const id = me();
+      const s = people(load());
+      return s.items
+        .filter(
+          (i) =>
+            i.owner_id === id &&
+            i.collection === 'design' &&
+            !i.deleted_at &&
+            (i.published || s.shares.some((sh) => sh.item_id === i.id)),
+        )
+        .map((i) => ({ id: i.id, name: i.path.split('/').pop() || i.path }));
+    },
+    async setFriendShares(itemId, friendIds) {
+      guard();
+      const id = me();
+      const s = people(load());
+      if (!s.items.some((i) => i.id === itemId && i.owner_id === id)) throw new Error('Sharing: not your item');
+      if (friendIds.some((f) => !areFriends(s, id, f))) throw new Error('Sharing: only with friends');
+      s.shares = s.shares.filter((sh) => sh.item_id !== itemId);
+      for (const f of friendIds) s.shares.push({ item_id: itemId, grantee_id: f });
+      save(s);
+    },
+
+    // ---- likes and ratings -------------------------------------------------
+    async reactions(itemIds) {
+      guard();
+      const s = people(load());
+      const uid = sessionUser?.id ?? null;
+      const out = new Map<string, Reactions>();
+      for (const id of itemIds) {
+        if (!canSee(s, id, uid)) continue;
+        const rs = s.reactions.filter((r) => r.item_id === id);
+        const stars = rs.map((r) => r.stars).filter((x): x is number => x !== null);
+        const mine = uid ? rs.find((r) => r.user_id === uid) : undefined;
+        const comments = s.comments.filter((c) => c.item_id === id).length;
+        if (!rs.length && !comments) continue;
+        out.set(id, {
+          likes: rs.filter((r) => r.liked).length,
+          ratings: stars.length,
+          average: stars.length ? Math.round((stars.reduce((a, b) => a + b, 0) / stars.length) * 100) / 100 : null,
+          comments,
+          mine: mine ? { liked: mine.liked, stars: mine.stars } : null,
+        });
+      }
+      return out;
+    },
+    async react(itemId, change) {
+      guard();
+      const id = me();
+      const s = people(load());
+      const item = s.items.find((i) => i.id === itemId);
+      if (!item || item.owner_id === id || !canSee(s, itemId, id)) throw new Error('Saving your rating: not allowed');
+      if (change.stars != null && !(change.stars >= 1 && change.stars <= 5)) throw new Error('Saving your rating: 1–5 stars');
+      let r = s.reactions.find((x) => x.item_id === itemId && x.user_id === id);
+      if (!r) s.reactions.push((r = { item_id: itemId, user_id: id, liked: false, stars: null }));
+      if (change.liked !== undefined) r.liked = change.liked;
+      if (change.stars !== undefined) r.stars = change.stars;
+      save(s);
+    },
+
+    // ---- comments and links ------------------------------------------------
+    async comments(itemId) {
+      guard();
+      const id = me();
+      const s = people(load());
+      if (!canSee(s, itemId, id)) return [];
+      const owner = s.items.find((i) => i.id === itemId)?.owner_id;
+      return s.comments
+        .filter((c) => c.item_id === itemId)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .map((c) => {
+          const p = s.profiles.find((x) => x.user_id === c.author_id);
+          return {
+            id: c.id,
+            author: p ? { id: p.user_id, username: p.username, avatar: p.avatar ?? null } : null,
+            body: c.body,
+            createdAt: c.created_at,
+            canDelete: c.author_id === id || owner === id,
+          };
+        });
+    },
+    async addComment(itemId, body) {
+      guard();
+      const id = me();
+      const s = people(load());
+      const text = body.trim();
+      if (!text) return { ok: false, error: 'Write something first' };
+      if (!s.profiles.some((p) => p.user_id === id)) return { ok: false, error: 'Pick a username (in Account) before commenting' };
+      if (!canSee(s, itemId, id)) return { ok: false, error: 'Could not post the comment' };
+      s.comments.push({
+        id: 'c_' + Math.random().toString(36).slice(2, 10),
+        item_id: itemId,
+        author_id: id,
+        body: text,
+        created_at: new Date().toISOString(),
+      });
+      save(s);
+      return { ok: true };
+    },
+    async deleteComment(commentId) {
+      guard();
+      const id = me();
+      const s = people(load());
+      s.comments = s.comments.filter((c) => {
+        if (c.id !== commentId) return true;
+        const owner = s.items.find((i) => i.id === c.item_id)?.owner_id;
+        return !(c.author_id === id || owner === id);
+      });
+      save(s);
+    },
+    async design(itemId) {
+      guard();
+      const s = people(load());
+      const uid = sessionUser?.id ?? null;
+      const i = s.items.find((x) => x.id === itemId);
+      if (!i || i.collection !== 'design' || !canSee(s, itemId, uid)) return null;
+      const p = uid ? s.profiles.find((x) => x.user_id === i.owner_id) : undefined;
+      return {
+        id: i.id,
+        doc: i.doc,
+        publishedAt: i.published_at ?? '',
+        owner: p ? { id: p.user_id, username: p.username, avatar: p.avatar ?? null } : null,
+      };
     },
 
     fake: {

@@ -63,7 +63,14 @@ export type IconName =
   | 'eye-off'
   | 'dice'
   | 'play'
-  | 'stop';
+  | 'stop'
+  | 'home'
+  | 'share'
+  | 'users'
+  | 'device'
+  | 'heart'
+  | 'comment'
+  | 'link';
 
 const DOT = { fill: 'currentColor', stroke: 'none' } as const;
 
@@ -309,6 +316,42 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <circle cx="9" cy="9" r="2" />
       <path d="m21 15-4.5-4.5L5 22" />
+    </>
+  ),
+  comment: <path d="M4 5h16v11H9l-5 4V5Z" />,
+  link: (
+    <>
+      <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+      <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+    </>
+  ),
+  heart: <path d="M12 20.5s-8-4.9-8-10.7A4.3 4.3 0 0 1 12 7.4a4.3 4.3 0 0 1 8 2.4c0 5.8-8 10.7-8 10.7Z" />,
+  device: (
+    <>
+      <rect x="4" y="2.5" width="16" height="19" rx="2" />
+      <path d="M10.5 18h3" />
+    </>
+  ),
+  home: (
+    <>
+      <path d="M3 10.5 12 3l9 7.5" />
+      <path d="M5 9v11h14V9" />
+      <path d="M10 20v-6h4v6" />
+    </>
+  ),
+  share: (
+    <>
+      <circle cx="18" cy="5" r="2.5" />
+      <circle cx="6" cy="12" r="2.5" />
+      <circle cx="18" cy="19" r="2.5" />
+      <path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5" />
+    </>
+  ),
+  users: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+      <path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8" />
     </>
   ),
   star: (

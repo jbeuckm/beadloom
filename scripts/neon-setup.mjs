@@ -86,9 +86,20 @@ if (projectId) {
   done();
 } else {
   step(`Looking for a project named "${projectName}"`);
-  const list = await api('GET', '/projects?limit=400');
-  const found = (list.projects ?? []).find((p) => p.name === projectName);
-  if (found) {
+  // a project-scoped key can't list projects; the refusal names its project
+  let list = null;
+  let scopedId = null;
+  try {
+    list = await api('GET', '/projects?limit=400');
+  } catch (e) {
+    scopedId = /subject_project_id:"([^"]+)"/.exec(e.data?.message ?? '')?.[1];
+    if (!scopedId) throw e;
+  }
+  const found = (list?.projects ?? []).find((p) => p.name === projectName);
+  if (scopedId) {
+    projectId = scopedId;
+    done(`key is scoped to ${projectId}, using it`);
+  } else if (found) {
     projectId = found.id;
     done(`found ${projectId}`);
   } else {

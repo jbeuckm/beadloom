@@ -3,7 +3,7 @@
 // See docs/FILE_FORMAT.md for the annotated specification.
 // ---------------------------------------------------------------------------
 
-export const APP_NAME = 'Grid Designer';
+export const APP_NAME = 'Chromattice';
 export const APP_VERSION = '1.0.0';
 
 export const FORMAT_ID = 'beadloom-design' as const;

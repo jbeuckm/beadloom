@@ -1,8 +1,10 @@
-// Local-first sync. localStorage stays the working copy; every write to a
-// library bag or folder list (storage.ts calls `noteBagWrite` / `noteListWrite`)
-// is diffed against what was there and queued in an outbox, which is pushed
-// to the cloud whenever we're signed in and online. Pulls merge remote
-// changes back into localStorage; per item the newest `modified` wins.
+// Local-first sync of Cloud Storage. Its designs and palettes are cached in
+// localStorage (storage.CDKEY and friends) and edited there; every write to
+// one of those bags or folder lists (storage.ts calls `noteBagWrite` /
+// `noteListWrite`) is diffed against what was there and queued in an outbox,
+// which is pushed to the cloud whenever we're signed in and online. Pulls
+// merge remote changes back into the cache; per item the newest `modified`
+// wins. Local Storage (storage.DKEY…) is never synced.
 //
 // Cloud rows are keyed by a client-made uuid that survives renames and moves;
 // the map from "collection:path" to that id lives in localStorage too.
@@ -11,9 +13,11 @@ import * as storage from '../storage';
 import type { CloudBackend, CloudUser, Collection, ItemRow } from './backend';
 import { REQUIRED_SCHEMA_VERSION } from './schema';
 
-const IDS_KEY = 'beadloom.cloud.ids';
-const OUTBOX_KEY = 'beadloom.cloud.outbox';
-const STATE_KEY = 'beadloom.cloud.state';
+const IDS_KEY = 'beadloom.cloud.itemIds';
+const OUTBOX_KEY = 'beadloom.cloud.queue';
+const STATE_KEY = 'beadloom.cloud.sync';
+// before Local / Cloud Storage, these tracked the (then synced) local library
+const OLD_KEYS = ['beadloom.cloud.ids', 'beadloom.cloud.outbox', 'beadloom.cloud.state'];
 
 export type SyncStatus = 'off' | 'synced' | 'syncing' | 'offline' | 'error';
 export interface SyncInfo {
@@ -34,12 +38,12 @@ interface CloudState {
   lastPull: string | null;
 }
 
-const COLLECTION_OF_BAG: Record<string, Collection> = { [storage.DKEY]: 'design', [storage.PKEY]: 'palette' };
-const COLLECTION_OF_LIST: Record<string, Collection> = { [storage.FKEY]: 'design', [storage.PFKEY]: 'palette' };
-const COLLECTION_OF_TRASH: Record<string, Collection> = { [storage.TKEY]: 'design', [storage.PTKEY]: 'palette' };
-const BAG_OF: Record<Collection, string> = { design: storage.DKEY, palette: storage.PKEY };
-const LIST_OF: Record<Collection, string> = { design: storage.FKEY, palette: storage.PFKEY };
-const TRASH_OF: Record<Collection, string> = { design: storage.TKEY, palette: storage.PTKEY };
+const COLLECTION_OF_BAG: Record<string, Collection> = { [storage.CDKEY]: 'design', [storage.CPKEY]: 'palette' };
+const COLLECTION_OF_LIST: Record<string, Collection> = { [storage.CFKEY]: 'design', [storage.CPFKEY]: 'palette' };
+const COLLECTION_OF_TRASH: Record<string, Collection> = { [storage.CTKEY]: 'design', [storage.CPTKEY]: 'palette' };
+const BAG_OF: Record<Collection, string> = { design: storage.CDKEY, palette: storage.CPKEY };
+const LIST_OF: Record<Collection, string> = { design: storage.CFKEY, palette: storage.CPFKEY };
+const TRASH_OF: Record<Collection, string> = { design: storage.CTKEY, palette: storage.CPTKEY };
 
 const readJson = <T>(key: string, fallback: T): T => {
   try {
@@ -87,10 +91,9 @@ export interface SyncEngine {
   stop(): void;
   /** Push now (after a pull); resolves when the outbox is empty or a request failed. */
   flush(): Promise<void>;
-  /** Queue every local item, folder and trash origin that isn't in the cloud yet. */
-  uploadEverything(): Promise<void>;
-  /** Local items that have never been synced to the current account. */
-  unsyncedCount(): number;
+  /** Upload this saved item if it isn't in the cloud yet; its cloud id, or
+   *  null when it couldn't be sent (offline, signed out). For sharing. */
+  ensureUploaded(collection: Collection, path: string): Promise<string | null>;
   info(): SyncInfo;
   setUser(user: CloudUser | null): void;
 }
@@ -100,6 +103,11 @@ export function createSyncEngine(
   onInfo: (info: SyncInfo) => void,
   onLibraryChanged: () => void,
 ): SyncEngine {
+  try {
+    OLD_KEYS.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
   let user: CloudUser | null = null;
   let ids = readJson<Record<string, string>>(IDS_KEY, {});
   let outbox = readJson<Outbox>(OUTBOX_KEY, emptyOutbox());
@@ -447,27 +455,18 @@ export function createSyncEngine(
     if (timer) clearTimeout(timer);
   }
 
-  function unsyncedCount(): number {
-    let n = 0;
-    for (const c of ['design', 'palette'] as Collection[])
-      for (const p of Object.keys(storage.readBag(BAG_OF[c]))) if (!ids[idKey(c, p)]) n++;
-    return n;
-  }
-
-  async function uploadEverything() {
-    for (const c of ['design', 'palette'] as Collection[]) {
-      for (const p of Object.keys(storage.readBag(BAG_OF[c]))) {
-        const id = ids[idKey(c, p)] ?? uuid();
-        ids[idKey(c, p)] = id;
-        queueItem(id, c);
-      }
-      for (const p of storage.readList(LIST_OF[c])) outbox.folders.add[idKey(c, p)] = c;
-      for (const p of Object.keys(storage.readBag(TRASH_OF[c]))) outbox.trash.set[idKey(c, p)] = c;
+  async function ensureUploaded(c: Collection, path: string): Promise<string | null> {
+    if (!user || storage.readBag(BAG_OF[c])[path] === undefined) return null;
+    let id = ids[idKey(c, path)];
+    if (!id) {
+      id = uuid();
+      ids[idKey(c, path)] = id;
+      queueItem(id, c);
+      saveIds();
+      saveOutbox();
     }
-    saveIds();
-    saveOutbox();
-    emit();
     await flush();
+    return outbox.items[id] === undefined && status === 'synced' ? id : null;
   }
 
   function setUser(u: CloudUser | null) {
@@ -478,7 +477,15 @@ export function createSyncEngine(
       return;
     }
     if (state.userId !== u.id) {
-      // a different account: what we knew about the cloud no longer applies
+      // a different account: its Cloud Storage replaces the last one's here
+      applying = true;
+      for (const c of ['design', 'palette'] as Collection[]) {
+        storage.writeBag(BAG_OF[c], {});
+        storage.writeList(LIST_OF[c], []);
+        storage.writeBag(TRASH_OF[c], {});
+      }
+      applying = false;
+      onLibraryChanged();
       ids = {};
       outbox = emptyOutbox();
       state = { userId: u.id, lastPull: null };
@@ -493,8 +500,7 @@ export function createSyncEngine(
     start,
     stop,
     flush,
-    uploadEverything,
-    unsyncedCount,
+    ensureUploaded,
     info: () => ({ status, pending: pendingCount(), error, lastSync }),
     setUser,
   };

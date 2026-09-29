@@ -1,12 +1,16 @@
 import { test, expect, type Page } from '@playwright/test';
-import { browserItem, openFileMenu, pickTool, snapshot, tapCell, waitForReady } from './helpers';
+import { browserItem, openFileMenu, openPaletteLibrary, pickTool, snapshot, tapCell, waitForReady } from './helpers';
 
 // The in-memory fake cloud (lib/cloud/fake.ts) stands in for Neon: same
 // interface, no network, and it persists in localStorage so a reload plays
 // "another device". Tests reach it through window.__beadloomCloudFake.
 
 const useFakeCloud = (page: Page) =>
-  page.addInitScript(() => localStorage.setItem('beadloom.cloudFake', '1'));
+  page.addInitScript(() => {
+    localStorage.setItem('beadloom.cloudFake', '1');
+    // past the home page's local-vs-account choice (tests/sharing.spec.ts covers it)
+    if (!localStorage.getItem('beadloom.homeMode')) localStorage.setItem('beadloom.homeMode', 'account');
+  });
 
 const cloudDump = (page: Page) =>
   page.evaluate(() => (window as any).__beadloomCloudFake.dump() as {
@@ -43,7 +47,7 @@ test('without cloud config the app is local-only: no account button', async ({ p
   await expect(page.getByRole('button', { name: 'Account' })).toHaveCount(0);
 });
 
-test('sign up, save, rename: every change reaches the cloud; another device pulls it', async ({
+test('sign up, save to Cloud Storage, rename: every change reaches the cloud; another device pulls it', async ({
   page,
 }) => {
   await useFakeCloud(page);
@@ -54,10 +58,11 @@ test('sign up, save, rename: every change reaches the cloud; another device pull
   await page.locator('.modal').getByRole('button', { name: 'Done' }).click();
   await expect(page.getByRole('button', { name: 'Account' })).toHaveText(/Synced/);
 
-  // a save syncs on its own
+  // signed in, Save As opens in Cloud Storage; a save there syncs on its own
   await pickTool(page, 'Pen');
   await tapCell(page, 2, 2);
   await saveAs(page, 'Cloud One');
+  expect((await snapshot(page)).slotPath).toBe('Cloud Storage/Cloud One');
   await expect.poll(async () => (await cloudDump(page)).items.map((i) => i.path)).toEqual(['Cloud One']);
   let dump = await cloudDump(page);
   expect(dump.items[0].collection).toBe('design');
@@ -81,18 +86,18 @@ test('sign up, save, rename: every change reaches the cloud; another device pull
   ).toEqual([{ collection: 'design', path: 'Gifts' }]);
   await modal.getByRole('button', { name: 'Cancel' }).click();
 
-  // "another device": same account, empty local library
+  // "another device": same account, nothing cached yet
   await page.evaluate(() => {
-    for (const k of ['beadloom.designs', 'beadloom.folders', 'beadloom.cloud.ids', 'beadloom.cloud.outbox', 'beadloom.cloud.state'])
+    for (const k of ['beadloom.cloud.designs', 'beadloom.cloud.folders', 'beadloom.cloud.itemIds', 'beadloom.cloud.queue', 'beadloom.cloud.sync'])
       localStorage.removeItem(k);
   });
   await page.reload();
   await waitForReady(page);
   await expect.poll(async () => (await cloudState(page)).status).toBe('synced');
   await expect.poll(() =>
-    page.evaluate(() => Object.keys(JSON.parse(localStorage['beadloom.designs'] || '{}'))),
+    page.evaluate(() => Object.keys(JSON.parse(localStorage['beadloom.cloud.designs'] || '{}'))),
   ).toEqual(['Cloud Two']);
-  expect(await page.evaluate(() => JSON.parse(localStorage['beadloom.folders'] || '[]'))).toEqual(['Gifts']);
+  expect(await page.evaluate(() => JSON.parse(localStorage['beadloom.cloud.folders'] || '[]'))).toEqual(['Gifts']);
   await openFileMenu(page, /⊟ Open/);
   await expect(browserItem(page, 'Cloud Two')).toBeVisible();
   await expect(browserItem(page, 'Gifts')).toBeVisible();
@@ -115,7 +120,7 @@ test('sign up, save, rename: every change reaches the cloud; another device pull
   await page.getByRole('button', { name: 'Account' }).click();
   await page.locator('.modal').getByRole('button', { name: 'Sync now' }).click();
   await expect.poll(() =>
-    page.evaluate(() => JSON.parse(JSON.parse(localStorage['beadloom.designs'])['Cloud Two']).meta.name),
+    page.evaluate(() => JSON.parse(JSON.parse(localStorage['beadloom.cloud.designs'])['Cloud Two']).meta.name),
   ).toBe('Cloud Two (edited elsewhere)');
 });
 
@@ -132,7 +137,7 @@ test('offline: saves queue, the status says so, and they sync when back', async 
   expect((await cloudState(page)).pending).toBe(1);
   await expect(page.getByRole('button', { name: 'Account' })).toHaveText(/Offline · 1 waiting/);
   expect((await cloudDump(page)).items).toHaveLength(0); // nothing got through
-  expect(await page.evaluate(() => 'Offline One' in JSON.parse(localStorage['beadloom.designs']))).toBe(true); // but it's saved locally
+  expect(await page.evaluate(() => 'Offline One' in JSON.parse(localStorage['beadloom.cloud.designs']))).toBe(true); // but it's saved on the device
 
   await setOffline(page, false);
   await page.getByRole('button', { name: 'Account' }).click();
@@ -142,20 +147,43 @@ test('offline: saves queue, the status says so, and they sync when back', async 
   await expect(page.locator('.modal')).toContainText('Everything is synced');
 });
 
-test('designs saved before signing in can be uploaded to the new account', async ({ page }) => {
+test('Local Storage never syncs; moving a design into Cloud Storage uploads it, and back takes it off', async ({
+  page,
+}) => {
   await useFakeCloud(page);
   await page.goto('/');
   await waitForReady(page);
-  await saveAs(page, 'Local One'); // signed out: stays on this device
-  expect((await cloudState(page)).user).toBeNull();
+  await saveAs(page, 'Local One'); // signed out: Local Storage is all there is
+  expect((await snapshot(page)).slotPath).toBe('Local Storage/Local One');
+  await openFileMenu(page, /⊟ Open/);
+  const m = page.locator('.modal');
+  await expect(m.locator('.fb-side-item', { hasText: 'Local Storage' })).toBeVisible();
+  await expect(m.locator('.fb-side-item', { hasText: 'Cloud Storage' })).toHaveCount(0);
+  await m.getByRole('button', { name: 'Cancel' }).click();
 
   await signUp(page, 'cy@example.com', 'correct-horse');
-  const m = page.locator('.modal');
-  await expect(m.locator('.acct-offer')).toContainText("1 saved design or palette on this device isn't in your account yet");
-  expect((await cloudDump(page)).items).toHaveLength(0);
-  await m.getByRole('button', { name: 'Upload to my account' }).click();
-  await expect.poll(async () => (await cloudDump(page)).items.map((i) => i.path)).toEqual(['Local One']);
-  await expect(m.locator('.acct-offer')).toHaveCount(0);
+  await m.getByRole('button', { name: 'Done' }).click();
+  expect((await cloudDump(page)).items).toHaveLength(0); // signing in uploads nothing
+
+  // Local → Cloud Storage: uploaded, and gone from Local Storage
+  await openFileMenu(page, /⊟ Open/);
+  await expect(m.locator('.fb-side-item', { hasText: 'Cloud Storage' })).toBeVisible();
+  await browserItem(page, 'Local One').click();
+  await m.getByLabel('Move to folder').selectOption({ label: 'Cloud Storage' });
+  await expect.poll(async () => (await cloudDump(page)).items.map((i) => [i.path, i.deleted_at])).toEqual([
+    ['Local One', null],
+  ]);
+  expect((await snapshot(page)).slotPath).toBe('Cloud Storage/Local One'); // the open design follows it
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage['beadloom.designs'] || '{}')))).toEqual([]);
+
+  // and back: off the account (soft-deleted, so other devices drop it too)
+  await m.locator('.fb-side-item', { hasText: 'Cloud Storage' }).click();
+  await browserItem(page, 'Local One').click();
+  await m.getByLabel('Move to folder').selectOption({ label: 'Local Storage' });
+  await expect.poll(async () => (await cloudDump(page)).items[0].deleted_at).not.toBeNull();
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage['beadloom.designs'] || '{}')))).toEqual([
+    'Local One',
+  ]);
 });
 
 test('forgot password: the emailed link opens the reset form; the new password works', async ({
@@ -225,4 +253,31 @@ test('an out-of-date database blocks sync with a plain message; the app tracks t
   await saveAs(page, 'Held Back');
   expect((await cloudDump(page)).items).toHaveLength(0); // nothing pushed to an old schema
   expect((await cloudState(page)).pending).toBe(1); // but the change waits
+});
+
+test('palettes have Local and Cloud Storage too; only Cloud Storage syncs', async ({ page }) => {
+  await useFakeCloud(page);
+  await page.goto('/');
+  await waitForReady(page);
+  await signUp(page, 'pal@example.com', 'correct-horse');
+  await page.locator('.modal').getByRole('button', { name: 'Done' }).click();
+
+  await openPaletteLibrary(page);
+  const m = page.locator('.modal');
+  await expect(m.locator('.fb-side-item', { hasText: 'Local Storage' })).toBeVisible();
+  await expect(m.locator('.fb-side-item.here')).toContainText('Cloud Storage'); // signed in: the default
+  await m.locator('#fb-save-name').fill('Synced Set');
+  await m.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(async () => (await cloudDump(page)).items.map((i) => [i.collection, i.path])).toEqual([
+    ['palette', 'Synced Set'],
+  ]);
+
+  await m.locator('.fb-side-item', { hasText: 'Local Storage' }).click();
+  await m.locator('#fb-save-name').fill('Kept Here');
+  await m.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(browserItem(page, 'Kept Here')).toBeVisible();
+  expect((await cloudDump(page)).items.map((i) => i.path)).toEqual(['Synced Set']);
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage['beadloom.palettes'] || '{}')))).toEqual([
+    'Kept Here',
+  ]);
 });

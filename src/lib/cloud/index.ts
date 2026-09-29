@@ -8,31 +8,25 @@ import type { CloudBackend } from './backend';
 import { createFakeBackend } from './fake';
 import { createNeonBackend } from './neon';
 import { createSyncEngine, type SyncEngine } from './sync';
+import { cloudConfig } from './config';
+import { setCloudStoreOpen } from '../stores';
+import { createActivityWatcher, deliver, type ActivityWatcher } from './activity';
 
-export const FAKE_FLAG = 'beadloom.cloudFake';
+export { FAKE_FLAG } from './config';
 
 export interface Cloud {
   available: boolean;
   backend: CloudBackend | null;
   engine: SyncEngine | null;
+  activity: ActivityWatcher | null;
 }
 
 function init(): Cloud {
-  let fake = false;
-  try {
-    fake =
-      import.meta.env.VITE_CLOUD_FAKE === '1' ||
-      (import.meta.env.DEV && localStorage.getItem(FAKE_FLAG) === '1');
-  } catch {
-    fake = false;
-  }
-  const authUrl = import.meta.env.VITE_NEON_AUTH_URL as string | undefined;
-  const dataUrl = import.meta.env.VITE_NEON_DATA_API_URL as string | undefined;
-
+  const { fake, authUrl, dataUrl } = cloudConfig;
   let backend: (CloudBackend & { fake?: unknown }) | null = null;
   if (fake) backend = createFakeBackend();
   else if (authUrl && dataUrl) backend = createNeonBackend(authUrl, dataUrl);
-  if (!backend) return { available: false, backend: null, engine: null };
+  if (!backend) return { available: false, backend: null, engine: null, activity: null };
 
   const store = () => useStore.getState();
   const engine = createSyncEngine(
@@ -43,9 +37,18 @@ function init(): Cloud {
   engine.start();
   store().setCloudAvailable(true);
 
+  const activity = createActivityWatcher(
+    backend,
+    (e) => void deliver(e, (text) => store().notify(text)),
+    (id) => `${location.origin}${location.pathname}#design=${id}`,
+  );
+
   const apply = (u: Parameters<SyncEngine['setUser']>[0]) => {
+    setCloudStoreOpen(!!u); // Cloud Storage shows in the browsers only while signed in
     store().setCloudUser(u);
     engine.setUser(u);
+    activity.setUser(u);
+    store().bumpLibrary();
   };
   backend.onUserChange(apply);
   backend
@@ -54,9 +57,9 @@ function init(): Cloud {
     .catch(() => apply(null));
 
   if (fake && 'fake' in backend)
-    (window as unknown as { __beadloomCloudFake: unknown }).__beadloomCloudFake = backend.fake;
+    Object.assign(window, { __beadloomCloudFake: backend.fake, __beadloomActivity: activity });
 
-  return { available: true, backend, engine };
+  return { available: true, backend, engine, activity };
 }
 
 export const cloud: Cloud = init();

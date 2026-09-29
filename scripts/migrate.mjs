@@ -3,6 +3,12 @@
 //
 //   npm run db:migrate            apply what's pending
 //   npm run db:migrate -- --status   list applied / pending, change nothing
+//   npm run db:migrate -- --refresh-api   just refresh the Data API's schema cache
+//
+// After applying, it refreshes the Neon Data API's schema cache so new tables
+// and functions are reachable at once (the Data API doesn't notice on its
+// own). That needs NEON_API_KEY and NEON_PROJECT_ID; without them it says so
+// and the cache catches up later.
 //
 // Connects with DATABASE_URL (the Neon connection string, from .env or the
 // environment — never shipped to the browser). Applied versions are recorded
@@ -34,6 +40,40 @@ if (!url) {
   process.exit(2);
 }
 const statusOnly = process.argv.includes('--status');
+const refreshOnly = process.argv.includes('--refresh-api');
+
+/** Refresh the schema cache of the Data API serving DATABASE_URL's branch. */
+async function refreshDataApi() {
+  const key = process.env.NEON_API_KEY;
+  const project = process.env.NEON_PROJECT_ID;
+  const u = new URL(url);
+  if (!key || !project || u.hostname === 'localhost') {
+    if (u.hostname !== 'localhost')
+      console.log('Data API schema cache not refreshed (set NEON_API_KEY and NEON_PROJECT_ID to do it here).');
+    return;
+  }
+  const api = async (method, path) => {
+    const r = await fetch('https://console.neon.tech/api/v2' + path, {
+      method,
+      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: method === 'PATCH' ? '{}' : undefined,
+    });
+    if (!r.ok) throw new Error(`${method} ${path} → ${r.status} ${(await r.text()).slice(0, 200)}`);
+    return r.json();
+  };
+  const host = u.hostname.replace('-pooler', '');
+  const { endpoints } = await api('GET', `/projects/${project}/endpoints`);
+  const ep = endpoints.find((e) => e.host === host);
+  if (!ep) throw new Error(`No endpoint ${host} in project ${project}`);
+  const db = decodeURIComponent(u.pathname.slice(1));
+  process.stdout.write('refreshing the Data API schema cache… ');
+  await api('PATCH', `/projects/${project}/branches/${ep.branch_id}/data-api/${db}`);
+  console.log('ok');
+}
+if (refreshOnly) {
+  await refreshDataApi();
+  process.exit(0);
+}
 
 const files = readdirSync(dir)
   .filter((f) => /^\d{4}_.+\.sql$/.test(f))
@@ -57,6 +97,7 @@ try {
     console.log(`${applied.has(m.version) ? 'applied' : 'pending'}  ${String(m.version).padStart(4, '0')}  ${m.name}`);
   if (statusOnly || !pending.length) {
     console.log(pending.length ? `${pending.length} pending` : 'Database is up to date.');
+    await client.end();
     process.exit(0);
   }
 
@@ -80,3 +121,4 @@ try {
 } finally {
   await client.end();
 }
+await refreshDataApi();

@@ -237,7 +237,7 @@ export function serializePalette(p: Palette): string {
 export function parsePalette(text: string): Palette {
   const raw = JSON.parse(text);
   if (raw?.format !== PALETTE_FORMAT_ID)
-    throw new Error('Not a Grid Designer palette file.');
+    throw new Error('Not a Chromattice palette file.');
   const colors = coerceColors(raw?.palette?.colors);
   return {
     id: String(raw?.palette?.id ?? 'palette'),

@@ -7,7 +7,7 @@ import { downloadText, exportPNG, pickTextFile } from '../lib/designFormat';
 import * as storage from '../lib/storage';
 import { gridTypeFor } from '../lib/gridTypes';
 
-export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help' | 'account';
+export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help' | 'account' | 'home' | 'settings';
 
 /** Press-and-hold auto-repeat for the ± steppers, one history entry per hold. */
 function useHoldRepeat(step: () => void, onStart?: () => void) {
@@ -228,6 +228,11 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
             <MenuItem onClick={() => onDialog('help')} close={close}>
               ? File Format &amp; Shortcuts
             </MenuItem>
+            {s.cloudAvailable && (
+              <MenuItem onClick={() => onDialog('settings')} close={close}>
+                ⚙ Settings…
+              </MenuItem>
+            )}
           </>
         )}
       </Menu>
@@ -244,8 +249,20 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
       <div className="spacer" />
 
       <LoomSize />
+      <HomeButton onClick={() => onDialog('home')} />
       <AccountButton onClick={() => onDialog('account')} />
     </div>
+  );
+}
+
+/** Back to the home page (gallery, local vs account); only with accounts. */
+function HomeButton({ onClick }: { onClick: () => void }) {
+  const available = useStore((s) => s.cloudAvailable);
+  if (!available) return null;
+  return (
+    <button className="btn icon-btn" onClick={onClick} aria-label="Home" title="Home: gallery and account options">
+      <Icon name="home" size={18} />
+    </button>
   );
 }
 

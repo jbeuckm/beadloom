@@ -1,5 +1,6 @@
 # Apply pending database migrations whenever one lands on main.
-# Needs the repository secret DATABASE_URL (the Neon connection string).
+# Needs the repository secret DATABASE_URL (the Neon connection string), and
+# NEON_API_KEY + NEON_PROJECT_ID to refresh the Data API's schema cache after.
 name: Migrate database
 
 on:
@@ -23,3 +24,5 @@ jobs:
       - run: npm run db:migrate
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}

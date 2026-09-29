@@ -50,6 +50,7 @@ import {
   validateDesign,
 } from '../lib/designFormat';
 import { clamp, normalizeHex, uid } from '../util';
+import { designLibrary } from '../lib/stores';
 import * as storage from '../lib/storage';
 
 export type WandMode = 'new' | 'add' | 'subtract';
@@ -2340,8 +2341,7 @@ export const useStore = create<StoreState>()(
       const trimmed = name.trim();
       if (!trimmed) return;
       get().setName(trimmed);
-      const path = storage.designPath(folder, storage.cleanSegment(trimmed));
-      storage.saveDesignSlot(path, serializeDesign(get().design));
+      const path = designLibrary.save(folder, trimmed, serializeDesign(get().design));
       set({ dirty: false, slotPath: path });
     },
 
@@ -2350,7 +2350,7 @@ export const useStore = create<StoreState>()(
       const name = s.design.meta.name.trim();
       const folder = s.slotPath ? storage.splitDesignPath(s.slotPath).folder : '';
       const path = storage.designPath(folder, storage.cleanSegment(name));
-      if (!name || !storage.listDesigns().includes(path)) return false;
+      if (!name || !designLibrary.has(path)) return false;
       s.saveToSlot(name, folder);
       return true;
     },
@@ -2384,7 +2384,7 @@ export const useStore = create<StoreState>()(
     },
 
     loadFromSlot: (path) => {
-      const j = storage.loadDesignSlot(path);
+      const j = designLibrary.load(path);
       if (!j) return;
       get().loadDesignText(j);
       set({ slotPath: path });

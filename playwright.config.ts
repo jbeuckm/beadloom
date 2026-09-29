@@ -8,7 +8,7 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   timeout: 30_000,
   use: {
-    baseURL: 'http://localhost:5847',
+    baseURL: 'http://localhost:5848',
     viewport: { width: 1194, height: 834 },
     deviceScaleFactor: 2,
     hasTouch: true,
@@ -22,9 +22,13 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], viewport: { width: 1194, height: 834 } },
     },
   ],
+  // Its own port, so a running `npm run dev` (which reads .env, and so talks
+  // to the real Neon) is never reused; blank Neon settings keep the app
+  // local-only unless a test turns on the in-memory fake cloud.
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5847',
+    command: 'npx vite --port 5848 --strictPort',
+    env: { VITE_NEON_AUTH_URL: '', VITE_NEON_DATA_API_URL: '' },
+    url: 'http://localhost:5848',
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },

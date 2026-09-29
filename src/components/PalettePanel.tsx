@@ -8,7 +8,8 @@ import { colorUsage } from '../lib/grid';
 import { compositeLayers } from '../lib/layers';
 import { contrastText } from '../util';
 import { serializePalette } from '../lib/designFormat';
-import { paletteLibrary, splitPath, stampPaletteJson } from '../lib/library';
+import { splitPath, stampPaletteJson } from '../lib/library';
+import { paletteLibrary } from '../lib/stores';
 import { swatchStyle } from '../lib/woolTexture';
 
 export default function PalettePanel() {

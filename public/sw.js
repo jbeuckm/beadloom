@@ -1,4 +1,4 @@
-/* Grid Designer service worker — dependency-free runtime cache.
+/* Chromattice service worker — dependency-free runtime cache.
  *
  * - App shell (navigations) → network-first, falling back to a cached index.
  * - Static assets (same-origin GET) → stale-while-revalidate.
@@ -65,5 +65,19 @@ self.addEventListener('fetch', (event) => {
         return cached || network;
       }),
     ),
+  );
+});
+
+// Activity notifications (src/lib/cloud/activity.ts): a tap brings the app
+// forward, on the design it's about when there is one.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || self.registration.scope;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+      const win = wins.find((w) => w.url.startsWith(self.registration.scope));
+      if (win) return win.focus().then((w) => w && w.navigate(url));
+      return self.clients.openWindow(url);
+    }),
   );
 });

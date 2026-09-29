@@ -391,6 +391,12 @@ export function makeLibrary(cfg: CollectionConfig) {
 
   return {
     rootName: cfg.rootName,
+    /** Show the top-level folders as sidebar roots (Local / Cloud Storage). */
+    storesAtTop: false,
+    /** A special icon for a folder (a storage location), if it has one. */
+    folderIcon: (_path: string): 'device' | 'cloud' | null => null,
+    /** Where the browser opens when it has nowhere to remember. */
+    defaultFolder: () => '',
     folderName,
     allFiles,
     allFolders,
@@ -429,7 +435,7 @@ const withJson = (json: string, set: (raw: any) => void) => {
 
 // ---- designs ---------------------------------------------------------------
 
-function describeDesign(json: string): FileMeta {
+export function describeDesign(json: string): FileMeta {
   let raw: any = {};
   try {
     raw = JSON.parse(json);
@@ -452,7 +458,7 @@ function describeDesign(json: string): FileMeta {
 }
 
 /** A small PNG data-URL of a saved design's flattened cells. */
-function designThumbnail(json: string, box = 112): string | null {
+export function designThumbnail(json: string, box = 112): string | null {
   try {
     const raw = JSON.parse(json);
     const data: number[][] = raw?.cells?.data ?? [];
@@ -482,17 +488,30 @@ function designThumbnail(json: string, box = 112): string | null {
   }
 }
 
-export const designLibrary = makeLibrary({
-  rootName: 'Designs',
-  bagKey: storage.DKEY,
-  folderKey: storage.FKEY,
-  trashKey: storage.TKEY,
+const designConfig = {
   describe: describeDesign,
-  withName: (json, name) =>
+  withName: (json: string, name: string) =>
     withJson(json, (raw) => {
       raw.meta = { ...raw.meta, name };
     }),
   thumbnail: designThumbnail,
+};
+/** Designs in Local Storage: this device only. (See lib/stores.ts for the
+ *  library the app uses, which adds Cloud Storage when there are accounts.) */
+export const localDesigns = makeLibrary({
+  rootName: 'Designs',
+  bagKey: storage.DKEY,
+  folderKey: storage.FKEY,
+  trashKey: storage.TKEY,
+  ...designConfig,
+});
+/** Designs in Cloud Storage: the account's, synced. */
+export const cloudDesigns = makeLibrary({
+  rootName: 'Designs',
+  bagKey: storage.CDKEY,
+  folderKey: storage.CFKEY,
+  trashKey: storage.CTKEY,
+  ...designConfig,
 });
 
 // ---- palettes --------------------------------------------------------------
@@ -519,16 +538,26 @@ export function describePalette(json: string): FileMeta {
   };
 }
 
-export const paletteLibrary = makeLibrary({
+const paletteConfig = {
+  describe: describePalette,
+  withName: (json: string, name: string) =>
+    withJson(json, (raw) => {
+      raw.palette = { ...raw.palette, name };
+    }),
+};
+export const localPalettes = makeLibrary({
   rootName: 'Palettes',
   bagKey: storage.PKEY,
   folderKey: storage.PFKEY,
   trashKey: storage.PTKEY,
-  describe: describePalette,
-  withName: (json, name) =>
-    withJson(json, (raw) => {
-      raw.palette = { ...raw.palette, name };
-    }),
+  ...paletteConfig,
+});
+export const cloudPalettes = makeLibrary({
+  rootName: 'Palettes',
+  bagKey: storage.CPKEY,
+  folderKey: storage.CPFKEY,
+  trashKey: storage.CPTKEY,
+  ...paletteConfig,
 });
 
 /** A palette file stamped with when it was saved to the library. */

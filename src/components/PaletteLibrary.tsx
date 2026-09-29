@@ -10,7 +10,8 @@ import {
   serializePalette,
 } from '../lib/designFormat';
 import * as storage from '../lib/storage';
-import { describePalette, paletteLibrary, stampPaletteJson } from '../lib/library';
+import { describePalette, stampPaletteJson } from '../lib/library';
+import { paletteLibrary } from '../lib/stores';
 
 /**
  * Saved palettes in the same Finder-style browser as designs: folders, Trash,

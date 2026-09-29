@@ -7,6 +7,9 @@ import StatusBar from './StatusBar';
 import Dialogs from './Dialogs';
 import RightDock from './RightDock';
 import PrintView from './PrintView';
+import Home, { homeAtLaunch } from './Home';
+import { designIdFromUrl } from './Comments';
+import { cloud } from '../lib/cloud';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
 import { clearAuthUrl, resetTokenFromUrl } from '../lib/cloud';
@@ -32,6 +35,24 @@ export default function App() {
   // a password-reset link lands here with a token in the URL
   const [resetToken] = useState<string | null>(() => resetTokenFromUrl());
   const [dialog, setDialog] = useState<DialogId | null>(() => (resetTokenFromUrl() ? 'account' : null));
+  // the home page opens at launch until the user picks local vs account
+  // …or when opened with a design's shared link
+  const [linkedId, setLinkedId] = useState(() => (cloud.available ? designIdFromUrl() : null));
+  const [showHome, setShowHome] = useState(() => !resetTokenFromUrl() && (homeAtLaunch() || !!linkedId));
+  const openDialog = (d: DialogId) => (d === 'home' ? setShowHome(true) : setDialog(d));
+  // a design link clicked inside the app (in a comment) only changes the hash
+  useEffect(() => {
+    if (!cloud.available) return;
+    const onHash = () => {
+      const id = designIdFromUrl();
+      if (!id) return;
+      setDialog(null);
+      setLinkedId(id);
+      setShowHome(true);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   const rightPanel = useStore((s) => s.rightPanel);
   const showPrint = useStore((s) => s.showPrint);
 
@@ -57,6 +78,7 @@ export default function App() {
 
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e.target, e.key)) return;
+      if (document.querySelector('.home')) return; // the editor is behind the home page
       const s = useStore.getState();
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
@@ -180,7 +202,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar onDialog={setDialog} />
+      <TopBar onDialog={openDialog} />
       <div className="body">
         <LoomCanvas />
         {rightPanel && <RightDock />}
@@ -192,10 +214,22 @@ export default function App() {
         <Dialogs
           which={dialog}
           resetToken={resetToken}
+          onSwitch={setDialog}
           onClose={() => {
             if (resetToken) clearAuthUrl();
             setDialog(null);
           }}
+        />
+      )}
+      {showHome && (
+        <Home
+          openId={linkedId}
+          onClose={() => {
+            if (linkedId) history.replaceState(null, '', location.pathname);
+            setLinkedId(null);
+            setShowHome(false);
+          }}
+          onSignIn={() => setDialog('account')}
         />
       )}
       <Notice />

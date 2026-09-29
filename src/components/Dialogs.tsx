@@ -1,9 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import Modal from './Modal';
-import FileBrowser from './FileBrowser';
+import FileBrowser, { type FileAction, type VirtualLocation } from './FileBrowser';
+import ShareDialog from './ShareDialog';
+import { avatarFromDesign } from './Avatar';
+import { cloud } from '../lib/cloud';
+import type { Reactions, SharedItem } from '../lib/cloud/backend';
+import { ReactionBar } from './Reactions';
+import Comments, { ShareLinkButton } from './Comments';
 import AccountDialog from './AccountDialog';
-import { designLibrary } from '../lib/library';
+import SettingsDialog from './SettingsDialog';
+import { describeDesign } from '../lib/library';
+import { cloudInnerPath, designLibrary, inCloudStorage } from '../lib/stores';
 import { Icon } from './icons';
 import type { DialogId } from './TopBar';
 import * as storage from '../lib/storage';
@@ -15,12 +23,23 @@ export default function Dialogs({
   which,
   onClose,
   resetToken,
+  onSwitch,
 }: {
   which: DialogId;
   onClose: () => void;
   resetToken?: string | null;
+  /** Replace this dialog with another (Account → Settings). */
+  onSwitch?: (d: DialogId) => void;
 }) {
-  if (which === 'account') return <AccountDialog onClose={onClose} resetToken={resetToken ?? null} />;
+  if (which === 'account')
+    return (
+      <AccountDialog
+        onClose={onClose}
+        resetToken={resetToken ?? null}
+        onSettings={onSwitch && (() => onSwitch('settings'))}
+      />
+    );
+  if (which === 'settings') return <SettingsDialog onClose={onClose} />;
   if (which === 'new') return <NewDialog onClose={onClose} />;
   if (which === 'resize') return <ResizeDialog onClose={onClose} />;
   if (which === 'saveas') return <SaveAsDialog onClose={onClose} />;
@@ -199,8 +218,123 @@ function ResizeDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Designs friends shared with me, as a read-only location grouped by owner. */
+function useSharedWithMe(enabled: boolean): VirtualLocation | undefined {
+  const [items, setItems] = useState<SharedItem[] | null>(null);
+  useEffect(() => {
+    if (!enabled || !cloud.backend) return;
+    let live = true;
+    cloud.backend
+      .sharedWithMe()
+      .then((r) => live && setItems(r.filter((i) => i.collection === 'design')))
+      .catch(() => live && setItems([]));
+    return () => {
+      live = false;
+    };
+  }, [enabled]);
+  return useMemo(() => {
+    if (!enabled || !items) return undefined;
+    const json = new Map(items.map((i) => [i.id, JSON.stringify(i.doc, null, 2)]));
+    return {
+      label: 'Shared with me',
+      icon: 'users',
+      entries: () =>
+        items.map((i) => ({
+          kind: 'file' as const,
+          path: i.id,
+          folder: i.owner ? '@' + i.owner.username : 'Unknown',
+          name: storage.splitDesignPath(i.path).name,
+          meta: describeDesign(json.get(i.id)!),
+          readonly: true,
+        })),
+      load: (id) => json.get(id) ?? null,
+    };
+  }, [enabled, items]);
+}
+
+/** Like, rate and comment on a design a friend shared. */
+function RateDialog({ id, name, onClose }: { id: string; name: string; onClose: () => void }) {
+  const [r, setR] = useState<Reactions | undefined | null>(null); // null: loading
+  useEffect(() => {
+    let live = true;
+    cloud.backend
+      ?.reactions([id])
+      .then((m) => live && setR(m.get(id)))
+      .catch(() => live && setR(undefined));
+    return () => {
+      live = false;
+    };
+  }, [id]);
+  return (
+    <Modal title={`“${name}”`} onClose={onClose}>
+      {r !== null && <ReactionBar itemId={id} initial={r} canReact />}
+      <Comments itemId={id} />
+      <div className="actions">
+        <ShareLinkButton id={id} name={name} />
+        <span className="grow" />
+        <button className="btn primary" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /** The Finder-style browser over saved designs, for Open and Save As. */
 function DesignBrowser({ mode, onClose }: { mode: 'open' | 'save'; onClose: () => void }) {
+  const s = useStore();
+  const user = useStore((st) => st.cloudUser);
+  const [sharing, setSharing] = useState<{ path: string; name: string } | null>(null);
+  const [rating, setRating] = useState<{ id: string; name: string } | null>(null);
+  const shared = useSharedWithMe(!!user && mode === 'open');
+
+  const useAsPicture = async (path: string, name: string) => {
+    const json = designLibrary.load(path);
+    const png = json && avatarFromDesign(json);
+    if (!png || !cloud.backend) return s.notify('Could not make a picture from this design');
+    try {
+      const r = await cloud.backend.setAvatar(png);
+      s.notify(r.ok ? `“${name}” is your profile picture` : (r.error ?? 'Could not save the picture'));
+    } catch (err) {
+      s.notify((err as Error).message);
+    }
+  };
+  const fileActions: FileAction[] = user
+    ? [
+        {
+          label: 'Share…',
+          icon: 'share',
+          // only what's in the account can be shared
+          when: (e) => inCloudStorage(e.path),
+          hint: 'Only files in Cloud Storage can be shared',
+          run: (e) => setSharing({ path: cloudInnerPath(e.path), name: e.name }),
+        },
+        { label: 'Use as profile picture', icon: 'user', run: (e) => void useAsPicture(e.path, e.name) },
+        // shared-with-me entries are keyed by the item's cloud id
+        { label: 'Like & comment…', icon: 'heart', readonly: true, run: (e) => setRating({ id: e.path, name: e.name }) },
+      ]
+    : [];
+
+  return (
+    <>
+      {sharing && <ShareDialog path={sharing.path} name={sharing.name} onClose={() => setSharing(null)} />}
+      {rating && <RateDialog id={rating.id} name={rating.name} onClose={() => setRating(null)} />}
+      <DesignFiles mode={mode} onClose={onClose} virtual={shared} fileActions={fileActions} />
+    </>
+  );
+}
+
+function DesignFiles({
+  mode,
+  onClose,
+  virtual,
+  fileActions,
+}: {
+  mode: 'open' | 'save';
+  onClose: () => void;
+  virtual?: VirtualLocation;
+  fileActions: FileAction[];
+}) {
   const s = useStore();
   return (
     <FileBrowser
@@ -210,7 +344,10 @@ function DesignBrowser({ mode, onClose }: { mode: 'open' | 'save'; onClose: () =
       typeHeader="Grid type"
       currentPath={s.slotPath}
       initialName={s.design.meta.name || 'Untitled Pattern'}
-      onOpen={(e) => s.loadFromSlot(e.path)}
+      // a shared design opens as an unsaved copy; Save As keeps it
+      onOpen={(e, json) => (e.readonly ? s.loadDesignText(json) : s.loadFromSlot(e.path))}
+      virtual={virtual}
+      fileActions={fileActions}
       onSave={(name, folder) => {
         s.saveToSlot(name, folder);
         return useStore.getState().slotPath ?? '';

@@ -8,6 +8,15 @@ export const FKEY = 'beadloom.folders';
 export const TKEY = 'beadloom.trash';
 export const PFKEY = 'beadloom.paletteFolders';
 export const PTKEY = 'beadloom.paletteTrash';
+// Cloud Storage: the signed-in account's designs and palettes, cached on the
+// device. Only these are synced (lib/cloud/sync.ts); the keys above are Local
+// Storage and never leave the device.
+export const CDKEY = 'beadloom.cloud.designs';
+export const CFKEY = 'beadloom.cloud.folders';
+export const CTKEY = 'beadloom.cloud.trash';
+export const CPKEY = 'beadloom.cloud.palettes';
+export const CPFKEY = 'beadloom.cloud.paletteFolders';
+export const CPTKEY = 'beadloom.cloud.paletteTrash';
 export const BKEY = 'beadloom.browser';
 export const PBKEY = 'beadloom.paletteBrowser';
 

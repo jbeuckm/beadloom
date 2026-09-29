@@ -48,6 +48,20 @@ export interface FileBrowserProps {
   onClose: () => void;
   virtual?: VirtualLocation;
   footer?: ReactNode; // extra footer buttons, left-aligned
+  /** Extra actions on one saved file, e.g. Share… when signed in. */
+  fileActions?: FileAction[];
+}
+
+export interface FileAction {
+  label: string;
+  icon: IconName;
+  run: (entry: FileEntry) => void;
+  /** Which files it applies to (default: any saved file). */
+  when?: (entry: FileEntry) => boolean;
+  /** For the read-only location's files (e.g. shared with me) instead. */
+  readonly?: boolean;
+  /** Why it's unavailable for the selected file, as a tooltip. */
+  hint?: string;
 }
 
 type Loc =
@@ -139,6 +153,7 @@ export default function FileBrowser({
   onClose,
   virtual,
   footer,
+  fileActions = [],
 }: FileBrowserProps) {
   const prefs = useMemo(() => storage.readBrowserPrefs(prefsKey), [prefsKey]);
   const libraryNonce = useStore((s) => s.libraryNonce); // a sync changed saved files
@@ -155,10 +170,8 @@ export default function FileBrowser({
     const start = currentPath
       ? lib.splitPath(currentPath).folder
       : String(prefs.lastFolder ?? '');
-    return {
-      kind: 'folder',
-      path: start && col.allFolders().includes(start) && !lib.isInTrash(start) ? start : '',
-    };
+    const path = start && col.allFolders().includes(start) && !lib.isInTrash(start) ? start : '';
+    return { kind: 'folder', path: path || col.defaultFolder() };
   });
   const [history, setHistory] = useState<{ back: Loc[]; fwd: Loc[] }>({ back: [], fwd: [] });
   const [view, setView] = useState<'list' | 'icons'>(prefs.view === 'icons' ? 'icons' : 'list');
@@ -591,7 +604,7 @@ export default function FileBrowser({
   const crumbs: string[] = [];
   if (loc.kind === 'folder' && !query) {
     const parts = loc.path ? loc.path.split('/') : [];
-    if (!inTrash) crumbs.push('');
+    if (!inTrash && !col.storesAtTop) crumbs.push('');
     parts.forEach((_, i) => crumbs.push(parts.slice(0, i + 1).join('/')));
   }
 
@@ -678,7 +691,7 @@ export default function FileBrowser({
           >
             <Icon name="chevron-right" size={12} />
           </button>
-          <Icon name="folder" size={15} />
+          <Icon name={col.folderIcon(path) ?? 'folder'} size={15} />
           <span className="fb-side-label">{col.folderName(path)}</span>
         </div>
         {open && kids.map((k) => treeNode(k, depth + 1))}
@@ -689,6 +702,11 @@ export default function FileBrowser({
   const moveTargets = readonlySel
     ? ['', ...folders]
     : ['', ...folders].filter((f) => col.canMove(selRefs, f));
+  // extra file actions apply to one file outside the Trash: a saved one, or a
+  // read-only one for actions that say so
+  const actionable = single?.kind === 'file' && !inTrash ? single : null;
+  const canAct = (a: FileAction) =>
+    !!actionable && !!actionable.readonly === !!a.readonly && (a.when?.(actionable) ?? true);
   const openable =
     !!single &&
     (single.kind === 'folder' || (!lib.isInTrash(single.path) && mode !== 'save'));
@@ -709,6 +727,9 @@ export default function FileBrowser({
             null,
             ['Rename', startRename, !single || readonlySel],
             [readonlySel ? 'Copy to ' + col.rootName : 'Duplicate', duplicate],
+            ...fileActions.map(
+              (a) => [a.label, () => actionable && a.run(actionable), !canAct(a)] as [string, () => void, boolean],
+            ),
             ['Move to Trash', trash, readonlySel],
             null,
             ['New Folder', newFolder, !canSaveHere],
@@ -890,15 +911,24 @@ export default function FileBrowser({
             sideItem(virtual.label, virtual.icon, inVirtual, () =>
               go({ kind: 'virtual', path: '' }),
             )}
-          <div className="fb-side-head">Folders</div>
-          {sideItem(
-            col.rootName,
-            'folder',
-            loc.kind === 'folder' && loc.path === '' && !query,
-            () => go({ kind: 'folder', path: '' }),
-            '',
+          {col.storesAtTop ? (
+            <>
+              <div className="fb-side-head">Storage</div>
+              {col.childFolders('').map((f) => treeNode(f, 0))}
+            </>
+          ) : (
+            <>
+              <div className="fb-side-head">Folders</div>
+              {sideItem(
+                col.rootName,
+                'folder',
+                loc.kind === 'folder' && loc.path === '' && !query,
+                () => go({ kind: 'folder', path: '' }),
+                '',
+              )}
+              {col.childFolders('').map((f) => treeNode(f, 1))}
+            </>
           )}
-          {col.childFolders('').map((f) => treeNode(f, 1))}
           <div className="fb-side-sep" />
           {sideItem(
             'Trash',
@@ -1042,6 +1072,17 @@ export default function FileBrowser({
             <button className="btn mini" disabled={!selected.length} onClick={duplicate}>
               <Icon name="copy" size={15} /> {readonlySel ? 'Copy to ' + col.rootName : 'Duplicate'}
             </button>
+            {fileActions.filter((a) => !!a.readonly === (loc.kind === 'virtual')).map((a) => (
+              <button
+                key={a.label}
+                className="btn mini"
+                disabled={!canAct(a)}
+                title={actionable && !canAct(a) ? a.hint : undefined}
+                onClick={() => actionable && a.run(actionable)}
+              >
+                <Icon name={a.icon} size={15} /> {a.label}
+              </button>
+            ))}
             <select
               className="fb-move"
               aria-label={readonlySel ? 'Copy to folder' : 'Move to folder'}

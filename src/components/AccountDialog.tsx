@@ -1,9 +1,10 @@
 // Accounts: sign in, sign up, forgot / reset password, and — once signed in —
-// the sync status, a one-time offer to upload what's saved locally, sign out.
+// the sync status, username and friends, sign out.
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { useStore } from '../store/useStore';
 import Modal from './Modal';
+import Friends from './Friends';
 import { Icon } from './icons';
 import { cloud, clearAuthUrl, resetRedirectUrl } from '../lib/cloud';
 
@@ -12,9 +13,11 @@ type Mode = 'signin' | 'signup' | 'forgot' | 'reset' | 'account';
 export default function AccountDialog({
   onClose,
   resetToken,
+  onSettings,
 }: {
   onClose: () => void;
   resetToken: string | null;
+  onSettings?: () => void;
 }) {
   const user = useStore((s) => s.cloudUser);
   const info = useStore((s) => s.cloudInfo);
@@ -29,15 +32,12 @@ export default function AccountDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
-  const [offer, setOffer] = useState(0); // local files the account doesn't have yet
 
-  // arriving signed in (or a sign-in landing): show the account, and offer
-  // to upload anything saved only on this device
+  // arriving signed in (or a sign-in landing): show the account
   useEffect(() => {
     if (!user || mode === 'reset') return;
     setMode('account');
-    setOffer(engine?.unsyncedCount() ?? 0);
-  }, [user, mode, engine]);
+  }, [user, mode]);
 
   if (!backend || !engine) return null;
 
@@ -111,35 +111,21 @@ export default function AccountDialog({
             {statusLine}
           </p>
           <p className="hint">
-            Designs and palettes you save are kept in your account and appear on every device you
-            sign in on. Saving still works offline; changes sync when you're back.
+            Designs and palettes in <b>Cloud Storage</b> are kept in your account and appear on every
+            device you sign in on; saving still works offline and syncs when you're back. Those in{' '}
+            <b>Local Storage</b> stay on this device. Move a file between them in Open or the Palette
+            Library.
           </p>
-          {offer > 0 && (
-            <div className="acct-offer">
-              <p>
-                {offer} saved design{offer === 1 ? '' : 's'} or palette{offer === 1 ? '' : 's'} on this
-                device {offer === 1 ? "isn't" : "aren't"} in your account yet.
-              </p>
-              <div className="actions">
-                <button className="btn" onClick={() => setOffer(0)}>
-                  Not now
-                </button>
-                <button
-                  className="btn primary"
-                  onClick={() => {
-                    setOffer(0);
-                    void engine.uploadEverything();
-                  }}
-                >
-                  Upload to my account
-                </button>
-              </div>
-            </div>
-          )}
+          <Friends />
           <div className="actions spread">
             <button className="btn" onClick={() => void engine.flush()} disabled={info.status === 'syncing'}>
               Sync now
             </button>
+            {onSettings && (
+              <button className="btn ghost" onClick={onSettings}>
+                Notifications…
+              </button>
+            )}
             <span className="grow" />
             <button
               className="btn"
