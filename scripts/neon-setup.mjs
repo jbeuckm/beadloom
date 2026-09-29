@@ -10,7 +10,7 @@
 // Needs NEON_API_KEY (from console.neon.tech → Account settings → API keys) in
 // .env or the environment. Idempotent: run it again and it reuses what exists.
 // Optional: NEON_PROJECT_ID to target an existing project, NEON_PROJECT_NAME
-// (default "grid-designer"), NEON_REGION (default aws-us-east-2).
+// (default "chromattice"), NEON_REGION (default aws-us-east-2).
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -79,7 +79,7 @@ const isNotFound = (e) => e.status === 404;
 
 // ---- project ---------------------------------------------------------------
 let projectId = env.NEON_PROJECT_ID;
-const projectName = env.NEON_PROJECT_NAME || 'grid-designer';
+const projectName = env.NEON_PROJECT_NAME || 'chromattice';
 if (projectId) {
   step(`Using project ${projectId}`);
   await api('GET', `/projects/${projectId}`);

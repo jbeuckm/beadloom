@@ -78,7 +78,7 @@ cloud, which is what the tests use.
 ## Run it
 
 ```bash
-cd ~/Documents/beadloom-studio
+cd ~/Documents/chromattice
 npm install
 npm run dev            # http://localhost:5173  (also printed on your LAN IP)
 ```

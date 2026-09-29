@@ -6,7 +6,7 @@
  * sub-path (e.g. a folder on GitHub Pages) without any extra config. */
 
 const CACHE = 'beadloom-v1';
-const BASE = new URL('./', self.location).pathname; // e.g. "/beadloom-studio/"
+const BASE = new URL('./', self.location).pathname; // e.g. "/chromattice/"
 const SHELL = [BASE, BASE + 'index.html', BASE + 'manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
