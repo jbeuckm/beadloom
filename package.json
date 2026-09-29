@@ -14,7 +14,8 @@
     "test:features": "playwright test features",
     "test:screens": "playwright test screenshots",
     "test:report": "playwright show-report",
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "node scripts/migrate.mjs",
+    "neon:setup": "node scripts/neon-setup.mjs"
   },
   "dependencies": {
     "@neondatabase/neon-js": "^0.7.0-beta",

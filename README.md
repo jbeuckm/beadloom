@@ -53,12 +53,14 @@ project and the app gains accounts: designs and palettes sync to the cloud on
 every save and appear on every device you sign in on. It is local-first — saving
 works offline and syncs when you're back.
 
-1. Create a Neon project, enable the **Data API** on its main branch and **Neon Auth**
-   with email sign-up. Add the app's URL (and `http://localhost:5847/`) to the
-   allowed redirect list.
-2. Copy `.env.example` to `.env`: `VITE_NEON_DATA_API_URL`, `VITE_NEON_AUTH_URL`
-   (the browser's two endpoints) and `DATABASE_URL` (the connection string, used
-   only by the migration runner).
+1. Copy `.env.example` to `.env` and put a Neon API key in `NEON_API_KEY`
+   (console.neon.tech → Account settings → API keys).
+2. `npm run neon:setup -- --migrate` creates (or reuses) the project, enables
+   Neon Auth and the Data API, allows the app's redirect URLs, writes
+   `VITE_NEON_DATA_API_URL`, `VITE_NEON_AUTH_URL` and `DATABASE_URL` into `.env`,
+   and runs the migrations. Doing it by hand instead: in the console, **Auth →
+   Enable Auth** and **Postgres database → Data API**, then fill in those three
+   values yourself.
 3. `npm run db:migrate` applies `db/migrations/*.sql` in order, once each,
    recording them in `schema_migrations`; `-- --status` just lists them. The
    GitHub Action in `.github/workflows/migrate.yml` does the same on every push

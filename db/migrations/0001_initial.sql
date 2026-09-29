@@ -10,6 +10,14 @@
 
 create extension if not exists pgcrypto;
 
+-- The Data API requests run as these roles; make sure they exist even on a
+-- database where the Data API was configured differently (or locally).
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
+  if not exists (select 1 from pg_roles where rolname = 'anonymous') then create role anonymous nologin; end if;
+end $$;
+
 -- ---- items: every saved design and palette --------------------------------
 create table if not exists library_items (
   id          uuid primary key,                       -- client-generated, stable across renames/moves
