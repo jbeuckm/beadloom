@@ -36,6 +36,18 @@ function num(v: unknown, dflt: number): number {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/** [[hex, share], …] with valid hexes and positive shares, renormalised. */
+function coerceHeather(raw: any): Array<[string, number]> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const parts = raw
+    .map((p: any) => [normalizeHex(String(p?.[0] ?? '')), Number(p?.[1])] as const)
+    .filter(([h, w]) => h && w > 0) as Array<[string, number]>;
+  const total = parts.reduce((a, [, w]) => a + w, 0);
+  return parts.length && total > 0
+    ? parts.map(([h, w]) => [h, Math.round((w / total) * 1000) / 1000])
+    : undefined;
+}
+
 function coerceColors(raw: any[]): Palette['colors'] {
   const colors = (Array.isArray(raw) ? raw : []).map((c: any, i: number) => {
     const out: Palette['colors'][number] = {
@@ -44,6 +56,8 @@ function coerceColors(raw: any[]): Palette['colors'] {
       hex: normalizeHex(String(c?.hex ?? '')) ?? '#888888',
     };
     if (c?.code) out.code = String(c.code);
+    const heather = coerceHeather(c?.heather);
+    if (heather) out.heather = heather;
     return out;
   });
   if (colors.length === 0) colors.push({ id: 'c1', name: 'Color 1', hex: '#000000' });

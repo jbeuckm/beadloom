@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore';
 import Modal from './Modal';
 import { Icon } from './icons';
 import { contrastText } from '../util';
+import { swatchStyle } from '../lib/woolTexture';
 
 export default function BackgroundDialog({ onClose }: { onClose: () => void }) {
   const colors = useStore((s) => s.design.palette.colors);
@@ -44,7 +45,7 @@ export default function BackgroundDialog({ onClose }: { onClose: () => void }) {
             title={`${c.name}${c.code ? ` · ${c.code}` : ''}`}
             onClick={() => pick(i)}
           >
-            <span className="bgd-swatch" style={{ background: c.hex, color: contrastText(c.hex) }}>
+            <span className="bgd-swatch" style={{ ...swatchStyle(c), color: contrastText(c.hex) }}>
               {bg === i && <Icon name="check" size={18} strokeWidth={3} />}
             </span>
             <span className="bgd-name">{c.name}</span>

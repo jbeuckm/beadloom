@@ -12,6 +12,7 @@ import {
   type LibraryColor,
 } from '../lib/colorLibraries';
 import { contrastText } from '../util';
+import { swatchStyle } from '../lib/woolTexture';
 
 const PREFS = 'beadloom.colorPicker';
 const readLine = (): string => {
@@ -167,7 +168,7 @@ export default function LibraryColorBrowser({
                   title={`${c.name} · ${c.code || c.library.fullName}${have ? ' · already in palette' : ''}`}
                   onClick={() => tap(c)}
                 >
-                  <span className="clp-swatch" style={{ background: c.hex, color: contrastText(c.hex) }}>
+                  <span className="clp-swatch" style={{ ...swatchStyle(c), color: contrastText(c.hex) }}>
                     {on && <Icon name="check" size={20} strokeWidth={3} />}
                     {have && !on && <span className="clp-have">in palette</span>}
                   </span>
@@ -197,7 +198,7 @@ export default function LibraryColorBrowser({
                       aria-label={`Remove ${c.name}`}
                       onClick={() => tap(c)}
                     >
-                      <i style={{ background: c.hex }} />
+                      <i style={swatchStyle(c, 18)} />
                       {c.code || c.name}
                       <Icon name="x" size={12} />
                     </button>

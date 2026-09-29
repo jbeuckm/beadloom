@@ -3,6 +3,7 @@ export interface MakerColor {
   name: string;
   code: string; // the maker's colour number / code ("" when they don't publish one)
   hex: string; // on-screen approximation, not a colour-managed proof
+  heather?: Array<[string, number]>; // heathered yarn: fibre colours + shares
 }
 
 /** A maker's colour line, offered as preset palettes in the Palette Library. */

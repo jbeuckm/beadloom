@@ -9,6 +9,7 @@ import { compositeLayers } from '../lib/layers';
 import { contrastText } from '../util';
 import { serializePalette } from '../lib/designFormat';
 import { paletteLibrary, splitPath, stampPaletteJson } from '../lib/library';
+import { swatchStyle } from '../lib/woolTexture';
 
 export default function PalettePanel() {
   const s = useStore();
@@ -76,7 +77,7 @@ export default function PalettePanel() {
             >
               <button
                 className="swatch"
-                style={{ background: c.hex, color: contrastText(c.hex) }}
+                style={{ ...swatchStyle(c, 36), color: contrastText(c.hex) }}
                 onClick={() => {
                   s.setActiveColor(i);
                   if (s.selectedSelburoseId)
@@ -178,7 +179,7 @@ export default function PalettePanel() {
             >
               <span
                 className={'bg-chip' + (bc ? '' : ' none')}
-                style={bc ? { background: bc.hex } : undefined}
+                style={bc ? swatchStyle(bc, 18) : undefined}
               />
               Background
             </button>

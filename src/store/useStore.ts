@@ -376,10 +376,13 @@ export interface StoreState {
   setBackgroundColor: (index: number | null) => void;
   setPaletteName: (s: string) => void;
   /** Append colours (e.g. picked from a maker library) as one undo step. */
-  addColors: (colors: Array<{ name: string; hex: string; code?: string }>) => void;
+  addColors: (
+    colors: Array<{ name: string; hex: string; code?: string; heather?: Array<[string, number]> }>,
+  ) => void;
+  /** `heather: null` drops the wool texture (e.g. after a custom recolour). */
   updateColor: (
     id: string,
-    patch: Partial<{ name: string; hex: string; code: string }>,
+    patch: Partial<{ name: string; hex: string; code: string; heather: Array<[string, number]> | null }>,
   ) => void;
   removeColor: (id: string) => void;
   moveColor: (id: string, dir: -1 | 1) => void;
@@ -2080,6 +2083,7 @@ export const useStore = create<StoreState>()(
         const added = colors.map((c) => ({
           ...makeColor(c.hex.toUpperCase(), c.name),
           ...(c.code ? { code: c.code } : {}),
+          ...(c.heather ? { heather: c.heather } : {}),
         }));
         return {
           design: {
@@ -2111,6 +2115,8 @@ export const useStore = create<StoreState>()(
                 if (h) next.hex = h;
               }
               if (patch.code != null) next.code = patch.code || undefined;
+              if (patch.heather === null) delete next.heather;
+              else if (patch.heather) next.heather = patch.heather;
               return next;
             }),
           },

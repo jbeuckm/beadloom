@@ -49,6 +49,12 @@ export default function ColorDialog({
   const [name, setName] = useState(color?.name ?? `Color ${count + 1}`);
   const [hex, setHex] = useState(color?.hex ?? randomPleasantHex());
   const [code, setCode] = useState(color?.code ?? '');
+  // a library wool's fibre mix; recolouring by hand drops it
+  const [heather, setHeather] = useState<Array<[string, number]> | null>(color?.heather ?? null);
+  const setHexByHand = (h: string) => {
+    setHex(h);
+    setHeather(null);
+  };
 
   if (editing && !color) return null;
 
@@ -56,8 +62,8 @@ export default function ColorDialog({
 
   const save = () => {
     const patch = { name: name.trim() || color?.name || `Color ${count + 1}`, hex: normalized, code: code.trim() };
-    if (id) updateColor(id, patch);
-    else addColors([patch]);
+    if (id) updateColor(id, { ...patch, heather });
+    else addColors([{ ...patch, ...(heather ? { heather } : {}) }]);
     onClose();
   };
 
@@ -86,7 +92,7 @@ export default function ColorDialog({
         <LibraryColorBrowser
           multi={!editing}
           onAdd={(cs) => {
-            addColors(cs.map((c) => ({ name: c.name, hex: c.hex, code: c.code })));
+            addColors(cs.map((c) => ({ name: c.name, hex: c.hex, code: c.code, heather: c.heather })));
             onClose();
           }}
           onPick={(c) => {
@@ -94,6 +100,7 @@ export default function ColorDialog({
             setName(c.name);
             setHex(c.hex);
             setCode(c.code);
+            setHeather(c.heather ?? null);
             setTabState('custom');
           }}
           onCancel={onClose}
@@ -104,7 +111,7 @@ export default function ColorDialog({
             <input
               type="color"
               value={normalized}
-              onChange={(e) => setHex(e.target.value)}
+              onChange={(e) => setHexByHand(e.target.value)}
               style={{ width: 44, height: 44, flex: '0 0 auto', borderRadius: 0 }}
               aria-label="Colour picker"
             />
@@ -129,7 +136,7 @@ export default function ColorDialog({
               <input
                 type="text"
                 value={hex}
-                onChange={(e) => setHex(e.target.value)}
+                onChange={(e) => setHexByHand(e.target.value)}
                 onBlur={() => setHex(normalized)}
                 spellCheck={false}
               />

@@ -31,6 +31,7 @@ function toPalette(id: string, name: string, lib: ColorLibrary, colors: MakerCol
       name: c.name,
       hex: c.hex,
       ...(c.code ? { code: c.code } : {}),
+      ...(c.heather ? { heather: c.heather } : {}),
     })),
   };
 }

@@ -22,6 +22,9 @@ export interface BeadColor {
   name: string;
   hex: string; // "#RRGGBB", upper-case
   code?: string;
+  /** Heathered yarn: the fibre colours and their share (summing to 1). The
+   *  app draws a wool texture from it; `hex` stays the colour it reads as. */
+  heather?: Array<[string, number]>;
 }
 
 export interface Palette {

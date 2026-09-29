@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore';
 import { Icon } from './icons';
 import { compositeLayers } from '../lib/layers';
 import { contrastText } from '../util';
+import { swatchStyle } from '../lib/woolTexture';
 
 export default function WorkColumnBar() {
   const workColumn = useStore((s) => s.workColumn);
@@ -59,7 +60,7 @@ export default function WorkColumnBar() {
             <li
               key={i}
               className={col ? '' : 'empty'}
-              style={col ? { background: col.hex, color: contrastText(col.hex) } : undefined}
+              style={col ? { ...swatchStyle(col, 20), color: contrastText(col.hex) } : undefined}
               title={col ? `${run.n} × ${col.name}${col.code ? ` (${col.code})` : ''}` : `${run.n} empty`}
             >
               {run.n}

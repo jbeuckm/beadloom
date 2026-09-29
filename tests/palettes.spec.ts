@@ -213,3 +213,73 @@ test('build a palette colour by colour from the maker libraries', async ({ page 
   await expect(browserItem(page, 'Miyuki Delica Essentials')).toBeVisible();
   await expect(browserItem(page, 'Miyuki Round Essentials')).toBeVisible();
 });
+
+test('Harrisville wool: measured colours with a heather texture that averages true', async ({
+  page,
+}) => {
+  // add Hemlock from the library
+  await page.locator('.palette footer').getByRole('button', { name: '+ Color' }).click();
+  const dialog = page.locator('.modal', { hasText: 'Add Colour' });
+  await dialog.getByRole('tab', { name: 'From Library' }).click();
+  await dialog.locator('.fb-side-item', { hasText: 'Shetland & Highland' }).click();
+  await dialog.getByLabel('Search colours').fill('hemlock');
+  await dialog.locator('.clp-tile', { hasText: 'Hemlock' }).click();
+  await dialog.getByRole('button', { name: 'Add 1 colour' }).click();
+
+  const hemlock = () =>
+    page.evaluate(() => window.__beadloom.getState().design.palette.colors.find((c: any) => c.name === 'Hemlock'));
+  let c = await hemlock();
+  // a deep olive green, not near-black: green leads, and it's clearly lit
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(c.hex.slice(i, i + 2), 16));
+  expect(g).toBeGreaterThan(r);
+  expect(g).toBeGreaterThan(b + 25);
+  expect(g).toBeGreaterThan(70);
+  expect(c.code).toBe('008');
+  expect(c.heather.length).toBeGreaterThan(1);
+  expect(c.heather.reduce((a: number, [, w]: [string, number]) => a + w, 0)).toBeCloseTo(1, 2);
+
+  // the swatch shows the texture
+  await expect(page.locator('.swatch-row').last().locator('.swatch')).toHaveCSS('background-image', /^url\("data:image\/png/);
+
+  // paint a block and read the canvas back: textured (not flat), averaging to the colour
+  const idx = (await snapshot(page)).paletteSize - 1;
+  await page.evaluate((i) => {
+    const st = window.__beadloom.getState();
+    const pts: Array<[number, number]> = [];
+    for (let r2 = 0; r2 < 8; r2++) for (let c2 = 0; c2 < 12; c2++) pts.push([c2, r2]);
+    st.paintCells(pts, i);
+    st.setView({ zoom: 2, panX: 10, panY: 10 });
+  }, idx);
+  const stats = await page.evaluate(() => {
+    const cv = document.querySelector('.canvas-wrap canvas') as HTMLCanvasElement;
+    const ctx = cv.getContext('2d')!;
+    const dpr = cv.width / cv.clientWidth;
+    const sc = 26 * 2;
+    // the interior of cell (4,3), clear of grid lines
+    const x = Math.round((10 + 4 * sc + 6) * dpr), y = Math.round((10 + 3 * sc * 0.8 + 6) * dpr);
+    const w = Math.round((sc - 12) * dpr), h = Math.round((sc * 0.8 - 12) * dpr);
+    const d = ctx.getImageData(x, y, w, h).data;
+    const lin = (v: number) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    const m = [0, 0, 0]; let n = 0; const seen = new Set<number>();
+    for (let i = 0; i < d.length; i += 4) { for (let k = 0; k < 3; k++) m[k] += lin(d[i + k]); seen.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); n++; }
+    const gam = (v: number) => Math.round(255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055));
+    return { mean: m.map((v) => gam(v / n)), distinct: seen.size };
+  });
+  expect(stats.distinct).toBeGreaterThan(30); // fibres, not a flat fill
+  stats.mean.forEach((v, k) => expect(Math.abs(v - [r, g, b][k])).toBeLessThan(14)); // reads as Hemlock
+
+  // the heather survives saving a palette and a design
+  const saved = await page.evaluate(() => JSON.parse(window.__beadloom.getState().exportJSON()));
+  expect(saved.palette.colors.find((x: any) => x.name === 'Hemlock').heather.length).toBe(c.heather.length);
+  await page.evaluate((j) => window.__beadloom.getState().loadDesignText(j), JSON.stringify(saved));
+  expect((await hemlock()).heather).toEqual(c.heather);
+
+  // recolouring by hand drops the texture (it would no longer match)
+  await page.locator('.swatch-meta').last().click();
+  const editor = page.locator('.modal', { hasText: 'Edit Colour' });
+  await editor.locator('input[type="color"]').fill('#336699');
+  await editor.getByRole('button', { name: 'Save' }).click();
+  c = await hemlock();
+  expect(c.hex).toBe('#336699');
+  expect(c.heather).toBeUndefined();
+});

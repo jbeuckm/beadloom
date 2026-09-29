@@ -1,4 +1,5 @@
 import type { BeadDesign } from '../types';
+import { TILE, VARIANTS, woolPattern } from './woolTexture';
 
 export interface View {
   scale: number; // px per column width (already includes zoom)
@@ -54,9 +55,17 @@ export function drawBase(
       if (v < 0) continue;
       const col = colors[v];
       if (!col) continue;
-      ctx.fillStyle = col.hex;
+      const x = offX + c * scale;
+      const y = offY + r * cellH;
+      // heathered wool: one texture tile per cell (a few variants, so
+      // neighbouring cells don't repeat); too small to see → flat colour
+      const pat = col.heather && scale >= 6 ? woolPattern(ctx, col, (c * 7 + r * 13) % VARIANTS) : null;
+      if (pat) {
+        pat.setTransform(new DOMMatrix([scale / TILE, 0, 0, cellH / TILE, x, y]));
+        ctx.fillStyle = pat;
+      } else ctx.fillStyle = col.hex;
       // +0.6 to close hairline seams between adjacent cells.
-      ctx.fillRect(offX + c * scale, offY + r * cellH, scale + 0.6, cellH + 0.6);
+      ctx.fillRect(x, y, scale + 0.6, cellH + 0.6);
     }
   }
 
