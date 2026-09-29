@@ -10,3 +10,7 @@ blob-report
 .last-run.json
 
 .vscode
+
+# local secrets / cloud config
+.env
+.env.*.local

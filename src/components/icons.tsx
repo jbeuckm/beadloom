@@ -39,6 +39,9 @@ export type IconName =
   | 'folder'
   | 'check'
   | 'lock'
+  | 'cloud'
+  | 'cloud-off'
+  | 'user'
   | 'unlock'
   | 'folder-plus'
   | 'list'
@@ -237,6 +240,20 @@ const PATHS: Record<IconName, ReactNode> = {
   'chevron-down': <path d="m6 9 6 6 6-6" />,
   'chevron-left': <path d="m15 18-6-6 6-6" />,
   check: <path d="M20 6 9 17l-5-5" />,
+  cloud: <path d="M17.5 19a4.5 4.5 0 0 0 .4-9A7 7 0 0 0 4.3 12.5 3.5 3.5 0 0 0 6 19h11.5Z" />,
+  'cloud-off': (
+    <>
+      <path d="M17.5 19h-11.5a3.5 3.5 0 0 1-1.7-6.5" />
+      <path d="M9.5 5.4A7 7 0 0 1 17.9 10a4.5 4.5 0 0 1 3.6 4.2" />
+      <path d="m3 3 18 18" />
+    </>
+  ),
+  user: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </>
+  ),
   lock: (
     <>
       <rect x="5" y="11" width="14" height="10" rx="2" />

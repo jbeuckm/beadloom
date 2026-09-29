@@ -7,7 +7,7 @@ import { downloadText, exportPNG, pickTextFile } from '../lib/designFormat';
 import * as storage from '../lib/storage';
 import { gridTypeFor } from '../lib/gridTypes';
 
-export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help';
+export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help' | 'account';
 
 /** Press-and-hold auto-repeat for the ± steppers, one history entry per hold. */
 function useHoldRepeat(step: () => void, onStart?: () => void) {
@@ -244,6 +244,42 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
       <div className="spacer" />
 
       <LoomSize />
+      <AccountButton onClick={() => onDialog('account')} />
     </div>
+  );
+}
+
+/** Sign-in entry point, and the sync status once signed in. */
+function AccountButton({ onClick }: { onClick: () => void }) {
+  const available = useStore((s) => s.cloudAvailable);
+  const user = useStore((s) => s.cloudUser);
+  const info = useStore((s) => s.cloudInfo);
+  if (!available) return null;
+  if (!user)
+    return (
+      <button className="btn account-btn" onClick={onClick} aria-label="Account" title="Sign in to sync your designs">
+        <Icon name="user" size={16} /> Sign in
+      </button>
+    );
+  const label =
+    info.status === 'syncing'
+      ? 'Syncing…'
+      : info.status === 'offline'
+        ? `Offline${info.pending ? ` · ${info.pending} waiting` : ''}`
+        : info.status === 'error'
+          ? 'Sync problem'
+          : info.pending
+            ? `${info.pending} to sync`
+            : 'Synced';
+  return (
+    <button
+      className={'btn account-btn ' + info.status}
+      onClick={onClick}
+      aria-label="Account"
+      title={`${user.email} — ${info.error ?? label}`}
+    >
+      <Icon name={info.status === 'offline' || info.status === 'error' ? 'cloud-off' : 'cloud'} size={16} />
+      <span className="account-status">{label}</span>
+    </button>
   );
 }

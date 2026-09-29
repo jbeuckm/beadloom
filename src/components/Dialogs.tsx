@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import Modal from './Modal';
 import FileBrowser from './FileBrowser';
+import AccountDialog from './AccountDialog';
 import { designLibrary } from '../lib/library';
 import { Icon } from './icons';
 import type { DialogId } from './TopBar';
@@ -13,10 +14,13 @@ import { DEFAULT_GRID_TYPE, GRID_TYPES, gridTypeFor } from '../lib/gridTypes';
 export default function Dialogs({
   which,
   onClose,
+  resetToken,
 }: {
   which: DialogId;
   onClose: () => void;
+  resetToken?: string | null;
 }) {
+  if (which === 'account') return <AccountDialog onClose={onClose} resetToken={resetToken ?? null} />;
   if (which === 'new') return <NewDialog onClose={onClose} />;
   if (which === 'resize') return <ResizeDialog onClose={onClose} />;
   if (which === 'saveas') return <SaveAsDialog onClose={onClose} />;

@@ -1,3 +1,5 @@
+import type { CloudUser } from '../lib/cloud/backend';
+import type { SyncInfo } from '../lib/cloud/sync';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 
@@ -293,6 +295,16 @@ export interface StoreState {
   shapeClipboard: ShapeObject | null; // a copied line / box / polygon, ready to paste
   notice: { text: string; id: number } | null; // brief status message (copied…, nothing to paste)
   notify: (text: string) => void;
+
+  // cloud accounts (lib/cloud): optional; absent when not configured
+  cloudAvailable: boolean;
+  cloudUser: CloudUser | null;
+  cloudInfo: SyncInfo;
+  libraryNonce: number; // bumped when a sync changes saved designs / palettes
+  setCloudAvailable: (v: boolean) => void;
+  setCloudUser: (u: CloudUser | null) => void;
+  setCloudInfo: (i: SyncInfo) => void;
+  bumpLibrary: () => void;
   /** ⌘V: drop a copied object straight away, or enter paste mode for cells. */
   paste: () => void;
   pasteShape: () => void;
@@ -950,6 +962,15 @@ export const useStore = create<StoreState>()(
     },
 
     notify: (text) => set((s) => ({ notice: { text, id: (s.notice?.id ?? 0) + 1 } })),
+
+    cloudAvailable: false,
+    cloudUser: null,
+    cloudInfo: { status: 'off', pending: 0 },
+    libraryNonce: 0,
+    setCloudAvailable: (v) => set({ cloudAvailable: v }),
+    setCloudUser: (u) => set({ cloudUser: u }),
+    setCloudInfo: (i) => set({ cloudInfo: i }),
+    bumpLibrary: () => set((s) => ({ libraryNonce: s.libraryNonce + 1 })),
 
     // ⌘C copies what you see: every visible layer merged (not the background
     // fill, so empty cells stay transparent when pasted).

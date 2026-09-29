@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Icon, type IconName } from './icons';
+import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
 import * as lib from '../lib/library';
 import type { Entry, FileEntry, ItemRef, Library, PathMap } from '../lib/library';
@@ -140,6 +141,7 @@ export default function FileBrowser({
   footer,
 }: FileBrowserProps) {
   const prefs = useMemo(() => storage.readBrowserPrefs(prefsKey), [prefsKey]);
+  const libraryNonce = useStore((s) => s.libraryNonce); // a sync changed saved files
   const [tick, setTick] = useState(0);
   const lastTap = useRef<{ key: string; t: number } | null>(null);
   const refresh = () => {
@@ -252,7 +254,7 @@ export default function FileBrowser({
       ? list
       : [...list].sort((a, b) => compare(a, b, sort));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick, loc, query, sort, col, virtual]);
+  }, [tick, libraryNonce, loc, query, sort, col, virtual]);
 
   const keys = entries.map((e) => lib.itemKey(e));
   const selected = entries.filter((e) => sel.has(lib.itemKey(e)));
@@ -260,9 +262,9 @@ export default function FileBrowser({
   const single = selected.length === 1 ? selected[0] : null;
   const readonlySel = selected.some((e) => e.readonly);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const folders = useMemo(() => col.allFolders().filter((f) => !lib.isInTrash(f)), [tick, col]);
+  const folders = useMemo(() => col.allFolders().filter((f) => !lib.isInTrash(f)), [tick, libraryNonce, col]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const trashCount = useMemo(() => col.trashCount(), [tick, col]);
+  const trashCount = useMemo(() => col.trashCount(), [tick, libraryNonce, col]);
 
   // ---- navigation ------------------------------------------------------
 

@@ -9,6 +9,7 @@ import RightDock from './RightDock';
 import PrintView from './PrintView';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
+import { clearAuthUrl, resetTokenFromUrl } from '../lib/cloud';
 
 /** A brief status message ("Copied 12 beads", "Nothing to paste…"). */
 function Notice() {
@@ -28,7 +29,9 @@ function Notice() {
 }
 
 export default function App() {
-  const [dialog, setDialog] = useState<DialogId | null>(null);
+  // a password-reset link lands here with a token in the URL
+  const [resetToken] = useState<string | null>(() => resetTokenFromUrl());
+  const [dialog, setDialog] = useState<DialogId | null>(() => (resetTokenFromUrl() ? 'account' : null));
   const rightPanel = useStore((s) => s.rightPanel);
   const showPrint = useStore((s) => s.showPrint);
 
@@ -185,7 +188,16 @@ export default function App() {
       <Toolbar />
       <PalettePanel />
       <StatusBar />
-      {dialog && <Dialogs which={dialog} onClose={() => setDialog(null)} />}
+      {dialog && (
+        <Dialogs
+          which={dialog}
+          resetToken={resetToken}
+          onClose={() => {
+            if (resetToken) clearAuthUrl();
+            setDialog(null);
+          }}
+        />
+      )}
       <Notice />
       {showPrint && <PrintView />}
     </div>

@@ -13,6 +13,17 @@ export const PBKEY = 'beadloom.paletteBrowser';
 
 export type Bag = Record<string, string>;
 
+// Cloud sync (lib/cloud/sync.ts) watches every write so it can queue the
+// difference; with no hooks set (signed out) writes are plain localStorage.
+type WriteHooks = {
+  bag: (key: string, prev: Bag, next: Bag) => void;
+  list: (key: string, prev: string[], next: string[]) => void;
+};
+let hooks: WriteHooks | null = null;
+export function setWriteHooks(h: WriteHooks | null): void {
+  hooks = h;
+}
+
 export function readBag(key: string): Bag {
   try {
     const v = JSON.parse(localStorage.getItem(key) || '{}');
@@ -22,11 +33,13 @@ export function readBag(key: string): Bag {
   }
 }
 export function writeBag(key: string, bag: Bag): void {
+  const prev = hooks ? readBag(key) : null;
   try {
     localStorage.setItem(key, JSON.stringify(bag));
   } catch {
     /* quota / private mode — ignore */
   }
+  if (hooks && prev) hooks.bag(key, prev, bag);
 }
 
 // A saved design's slot key is its path: "Name" at the top level, or
@@ -71,11 +84,14 @@ export const readList = (key: string): string[] => {
   }
 };
 export const writeList = (key: string, f: string[]): void => {
+  const prev = hooks ? readList(key) : null;
+  const next = [...new Set(f)].sort();
   try {
-    localStorage.setItem(key, JSON.stringify([...new Set(f)].sort()));
+    localStorage.setItem(key, JSON.stringify(next));
   } catch {
     /* ignore */
   }
+  if (hooks && prev) hooks.list(key, prev, next);
 };
 
 export const readBrowserPrefs = (key = BKEY): Record<string, unknown> => {

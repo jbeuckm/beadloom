@@ -2010,3 +2010,71 @@ kbd {
 .layer-row.locked {
   cursor: default;
 }
+
+/* ---------- accounts & sync ---------- */
+.account-btn {
+  gap: 6px;
+  font-size: 13px;
+}
+.account-btn.offline,
+.account-btn.error {
+  color: var(--danger);
+  border-color: #e7c3bb;
+}
+.account-btn.syncing .account-status {
+  color: var(--ink-soft);
+}
+.acct {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.acct-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+}
+.acct-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.acct-status.offline,
+.acct-status.error {
+  color: var(--danger);
+}
+.acct-offer {
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 8px;
+}
+.acct-offer p {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.acct-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fbe9e5;
+  color: var(--danger);
+  font-size: 13px;
+}
+.acct .field input[type='email'],
+.acct .field input[type='password'] {
+  min-height: var(--field-h);
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel-2);
+  font-size: 16px;
+}
+.acct .field .hint {
+  margin-top: 4px;
+}

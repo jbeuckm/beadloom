@@ -98,6 +98,12 @@ export async function snapshot(page: Page) {
       selectionMaskSize: s.selectionMask ? s.selectionMask.size : null,
       wandMode: s.wandMode,
       backgroundColor: s.design.backgroundColor ?? null,
+      cloud: {
+        available: s.cloudAvailable,
+        user: s.cloudUser ? s.cloudUser.email : null,
+        status: s.cloudInfo.status,
+        pending: s.cloudInfo.pending,
+      },
       view: s.view,
       format: s.design.format,
     };

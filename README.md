@@ -46,6 +46,24 @@ on a loom.
   are fully supported and round-trip losslessly.
 - Autosaves continuously; add to your iPad Home Screen to run full-screen.
 
+## Accounts and sync (optional)
+
+Signed out, everything is saved in the browser. Set up a free [Neon](https://neon.com)
+project and the app gains accounts: designs and palettes sync to the cloud on
+every save and appear on every device you sign in on. It is local-first — saving
+works offline and syncs when you're back.
+
+1. Create a Neon project, enable the **Data API** on its main branch and **Neon Auth**
+   with email sign-up. Add the app's URL (and `http://localhost:5847/`) to the
+   allowed redirect list.
+2. Run `db/schema.sql` in the Neon SQL editor (tables + row-level security).
+3. Copy `.env.example` to `.env` and fill in `VITE_NEON_DATA_API_URL` and
+   `VITE_NEON_AUTH_URL`; set the same two variables where the site is built.
+
+With neither variable set the account button doesn't appear. `VITE_CLOUD_FAKE=1`
+(or, in dev, `localStorage.beadloom.cloudFake = "1"`) swaps in an in-memory fake
+cloud, which is what the tests use.
+
 ## Run it
 
 ```bash

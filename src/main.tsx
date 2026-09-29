@@ -6,6 +6,7 @@ import { useStore } from './store/useStore';
 import { serializeDesign } from './lib/designFormat';
 import { compositeLayers } from './lib/layers';
 import * as storage from './lib/storage';
+import './lib/cloud';
 import { debounce } from './util';
 
 // Autosave the working design + persist settings, both outside React.
