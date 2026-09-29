@@ -38,6 +38,8 @@ export interface AuthResult {
 }
 
 export interface CloudBackend {
+  /** The newest applied migration (0 when the table is missing or empty). */
+  schemaVersion(): Promise<number>;
   /** The signed-in user, or null. Resolves once the stored session is checked. */
   currentUser(): Promise<CloudUser | null>;
   /** Called whenever the signed-in user changes (sign-in, sign-out, expiry). */

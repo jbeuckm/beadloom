@@ -9,6 +9,7 @@
 
 import * as storage from '../storage';
 import type { CloudBackend, CloudUser, Collection, ItemRow } from './backend';
+import { REQUIRED_SCHEMA_VERSION } from './schema';
 
 const IDS_KEY = 'beadloom.cloud.ids';
 const OUTBOX_KEY = 'beadloom.cloud.outbox';
@@ -112,6 +113,7 @@ export function createSyncEngine(
   let timer: number | null = null;
   let retryDelay = 5000;
   let started = false;
+  let schemaOk: boolean | null = null; // checked once per session
 
   const idKey = (c: Collection, path: string) => `${c}:${path}`;
   const pathOf = (id: string): { collection: Collection; path: string } | null => {
@@ -384,6 +386,19 @@ export function createSyncEngine(
     flushing = (async () => {
       setStatus('syncing');
       try {
+        if (schemaOk === null) {
+          const v = await backend.schemaVersion();
+          schemaOk = v >= REQUIRED_SCHEMA_VERSION;
+          if (!schemaOk) {
+            // an older database would fail on missing columns; say so plainly
+            setStatus(
+              'error',
+              `The database is behind this app (schema ${v}, needs ${REQUIRED_SCHEMA_VERSION}) — run npm run db:migrate`,
+            );
+            return;
+          }
+        }
+        if (!schemaOk) return;
         await pull();
         await push();
         retryDelay = 5000;

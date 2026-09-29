@@ -36,6 +36,15 @@ export function createNeonBackend(authUrl: string, dataApiUrl: string): CloudBac
   const here = () => `${location.origin}${location.pathname}`;
 
   return {
+    async schemaVersion() {
+      const r = await client
+        .from('schema_migrations')
+        .select('version')
+        .order('version', { ascending: false })
+        .limit(1);
+      if (r.error) return 0; // no table yet → nothing applied
+      return Number((r.data?.[0] as { version?: number } | undefined)?.version ?? 0);
+    },
     async currentUser() {
       const r = await ba.getSession();
       return r.data?.user ? toUser(r.data.user) : null;

@@ -56,9 +56,18 @@ works offline and syncs when you're back.
 1. Create a Neon project, enable the **Data API** on its main branch and **Neon Auth**
    with email sign-up. Add the app's URL (and `http://localhost:5847/`) to the
    allowed redirect list.
-2. Run `db/schema.sql` in the Neon SQL editor (tables + row-level security).
-3. Copy `.env.example` to `.env` and fill in `VITE_NEON_DATA_API_URL` and
-   `VITE_NEON_AUTH_URL`; set the same two variables where the site is built.
+2. Copy `.env.example` to `.env`: `VITE_NEON_DATA_API_URL`, `VITE_NEON_AUTH_URL`
+   (the browser's two endpoints) and `DATABASE_URL` (the connection string, used
+   only by the migration runner).
+3. `npm run db:migrate` applies `db/migrations/*.sql` in order, once each,
+   recording them in `schema_migrations`; `-- --status` just lists them. The
+   GitHub Action in `.github/workflows/migrate.yml` does the same on every push
+   to `main` that touches a migration (set the `DATABASE_URL` repository secret).
+
+The app checks the database's migration version on sign-in and refuses to sync
+against an older schema, with a message saying to migrate. A new migration =
+a new numbered file plus bumping `REQUIRED_SCHEMA_VERSION` in
+`src/lib/cloud/schema.ts`.
 
 With neither variable set the account button doesn't appear. `VITE_CLOUD_FAKE=1`
 (or, in dev, `localStorage.beadloom.cloudFake = "1"`) swaps in an in-memory fake

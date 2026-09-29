@@ -1,4 +1,5 @@
--- Grid Designer cloud schema for Neon (run once in the Neon SQL editor).
+-- Grid Designer cloud schema for Neon — migration 0001.
+-- Applied by `npm run db:migrate` (scripts/migrate.mjs); never run by hand.
 --
 -- Rows are owned by the signed-in Neon Auth user: auth.user_id() returns the
 -- `sub` claim of the JWT the Data API verified. Every rule lives in row-level
@@ -102,3 +103,10 @@ language sql security definer stable as $$
 $$;
 revoke all on function find_user_id(text) from public;
 grant execute on function find_user_id(text) to authenticated;
+
+-- ---- schema version, readable by the app -----------------------------------
+-- scripts/migrate.mjs creates schema_migrations and records each file it
+-- applies; the app reads the newest version to check the database is current.
+alter table schema_migrations enable row level security;
+create policy migrations_read on schema_migrations for select to anonymous, authenticated using (true);
+grant select on schema_migrations to anonymous, authenticated;

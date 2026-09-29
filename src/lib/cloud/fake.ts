@@ -12,6 +12,7 @@ import type {
   ItemRow,
   TrashOriginRow,
 } from './backend';
+import { REQUIRED_SCHEMA_VERSION } from './schema';
 
 const KEY = 'beadloom.fakeCloud';
 const SESSION = 'beadloom.fakeCloud.session';
@@ -24,6 +25,8 @@ interface Server {
   resets: Array<{ token: string; email: string }>;
   /** Simulated outage: every request fails while set. */
   offline: boolean;
+  /** Pretend the database is at this migration (default: current). */
+  schemaVersion?: number;
 }
 
 const load = (): Server => {
@@ -41,6 +44,7 @@ export function createFakeBackend(): CloudBackend & {
   /** Test hooks. */
   fake: {
     setOffline(v: boolean): void;
+    setSchemaVersion(v: number | undefined): void;
     /** Rows as the server holds them (all users). */
     dump(): Server;
     /** The last reset token issued for `email` (the "email" the user got). */
@@ -77,6 +81,10 @@ export function createFakeBackend(): CloudBackend & {
   });
 
   return {
+    async schemaVersion() {
+      guard();
+      return load().schemaVersion ?? REQUIRED_SCHEMA_VERSION;
+    },
     async currentUser() {
       return sessionUser;
     },
@@ -211,6 +219,11 @@ export function createFakeBackend(): CloudBackend & {
       setOffline(v) {
         const s = load();
         s.offline = v;
+        save(s);
+      },
+      setSchemaVersion(v) {
+        const s = load();
+        s.schemaVersion = v;
         save(s);
       },
       dump: load,

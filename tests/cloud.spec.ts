@@ -195,3 +195,34 @@ test('forgot password: the emailed link opens the reset form; the new password w
   await expect(page.locator('.modal')).toContainText('dee@example.com');
   expect((await cloudState(page)).user).toBe('dee@example.com');
 });
+
+test('an out-of-date database blocks sync with a plain message; the app tracks the newest migration', async ({
+  page,
+}) => {
+  // the app's required version is the newest file in db/migrations
+  const fs = await import('node:fs');
+  const newest = Math.max(
+    ...fs.readdirSync('db/migrations').filter((f) => /^\d{4}_.+\.sql$/.test(f)).map((f) => Number(f.slice(0, 4))),
+  );
+  const required = Number(/REQUIRED_SCHEMA_VERSION = (\d+)/.exec(fs.readFileSync('src/lib/cloud/schema.ts', 'utf8'))![1]);
+  expect(required).toBe(newest);
+
+  await useFakeCloud(page);
+  await page.goto('/');
+  await waitForReady(page);
+  await page.evaluate(() => (window as any).__beadloomCloudFake.setSchemaVersion(0));
+  await page.getByRole('button', { name: 'Account' }).click();
+  const m = page.locator('.modal');
+  await m.getByRole('button', { name: 'Create account' }).click();
+  await m.locator('input[type="text"]').fill('Tester');
+  await m.locator('input[type="email"]').fill('eve@example.com');
+  await m.locator('input[type="password"]').fill('correct-horse');
+  await m.getByRole('button', { name: 'Create account' }).click();
+  await expect.poll(async () => (await cloudState(page)).status).toBe('error');
+  await expect(m.locator('.acct-status')).toContainText(`schema 0, needs ${required}`);
+  await expect(m.locator('.acct-status')).toContainText('npm run db:migrate');
+  await m.getByRole('button', { name: 'Done' }).click();
+  await saveAs(page, 'Held Back');
+  expect((await cloudDump(page)).items).toHaveLength(0); // nothing pushed to an old schema
+  expect((await cloudState(page)).pending).toBe(1); // but the change waits
+});
