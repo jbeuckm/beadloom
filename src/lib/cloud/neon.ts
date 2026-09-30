@@ -13,6 +13,7 @@ import type {
   ItemRow,
   Comment,
   GalleryItem,
+  Post,
   Profile,
   Reactions,
   SharedItem,
@@ -21,6 +22,18 @@ import type {
 import { NO_REACTIONS, USERNAME_RE } from './backend';
 
 const ITEM_COLUMNS = 'id,collection,path,doc,modified,deleted_at';
+const POST_COLUMNS = 'id,author_id,title,body,visibility,design_ids,created_at,updated_at,published_at';
+type PostRow = {
+  id: string;
+  author_id: string;
+  title: string;
+  body: string;
+  visibility: Post['visibility'];
+  design_ids: string[];
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+};
 const PROFILE_COLUMNS = 'user_id,username,avatar';
 type ProfileRow = { user_id: string; username: string; avatar: string | null };
 const toProfile = (p: ProfileRow): Profile => ({ id: p.user_id, username: p.username, avatar: p.avatar });
@@ -64,7 +77,7 @@ export function createNeonBackend(authUrl: string, dataApiUrl: string): CloudBac
   /** Where sign-up verification and password-reset links come back to. */
   const here = () => `${location.origin}${location.pathname}`;
 
-  return {
+  const backend: CloudBackend = {
     async schemaVersion() {
       const r = await client
         .from('schema_migrations')
@@ -403,5 +416,67 @@ export function createNeonBackend(authUrl: string, dataApiUrl: string): CloudBac
       const names = (await signedIn()) ? await profilesOf([x.owner_id]) : new Map<string, Profile>();
       return { id: x.id, doc: x.doc, publishedAt: x.published_at ?? '', owner: names.get(x.owner_id) ?? null };
     },
+
+    // ---- posts ---------------------------------------------------------------
+    async posts({ mine, limit }) {
+      let q = client.from('posts').select(POST_COLUMNS);
+      if (mine) q = q.eq('author_id', await myId()).order('updated_at', { ascending: false });
+      else q = q.neq('visibility', 'draft').order('published_at', { ascending: false });
+      const r = await q.limit(limit);
+      check(r, 'Loading posts');
+      return toPosts((r.data ?? []) as PostRow[]);
+    },
+    async post(postId) {
+      const r = await client.from('posts').select(POST_COLUMNS).eq('id', postId).maybeSingle();
+      check(r, 'Loading the post');
+      return r.data ? (await toPosts([r.data as PostRow]))[0] : null;
+    },
+    async savePost(d) {
+      const title = d.title.trim();
+      if (!title) return { ok: false, error: 'Give it a title' };
+      const now = new Date().toISOString();
+      const row: Record<string, unknown> = {
+        title,
+        body: d.body,
+        visibility: d.visibility,
+        design_ids: d.designIds,
+        updated_at: now,
+      };
+      let published: string | null = null;
+      if (d.id) {
+        const was = await client.from('posts').select('published_at').eq('id', d.id).maybeSingle();
+        published = (was.data as { published_at: string | null } | null)?.published_at ?? null;
+      }
+      // first time out of drafts: that's when it was published
+      row.published_at = d.visibility === 'draft' ? published : (published ?? now);
+      const r = d.id
+        ? await client.from('posts').update(row).eq('id', d.id).select('id')
+        : await client.from('posts').insert(row).select('id');
+      if (r.error?.code === '42501' || r.error?.code === '23503')
+        return { ok: false, error: 'Pick a username (in Account) before posting' };
+      const res = result(r, 'Could not save the post');
+      return res.ok ? { ...res, id: String((r.data as Array<{ id: string }>)?.[0]?.id ?? d.id) } : res;
+    },
+    async deletePost(postId) {
+      check(await client.from('posts').delete().eq('id', postId), 'Deleting the post');
+    },
   };
+
+  return backend;
+
+  async function toPosts(rows: PostRow[]): Promise<Post[]> {
+    const names = (await signedIn()) ? await profilesOf(rows.map((x) => x.author_id)) : new Map<string, Profile>();
+    return rows.map((x) => ({
+      id: x.id,
+      authorId: x.author_id,
+      author: names.get(x.author_id) ?? null,
+      title: x.title,
+      body: x.body,
+      visibility: x.visibility,
+      designIds: x.design_ids ?? [],
+      createdAt: x.created_at,
+      updatedAt: x.updated_at,
+      publishedAt: x.published_at,
+    }));
+  }
 }

@@ -14,6 +14,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react';
+import CloudStatusIcon from './CloudStatus';
 import { Icon, type IconName } from './icons';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
@@ -691,7 +692,12 @@ export default function FileBrowser({
           >
             <Icon name="chevron-right" size={12} />
           </button>
-          <Icon name={col.folderIcon(path) ?? 'folder'} size={15} />
+          {/* Cloud Storage's icon also says how its sync is going */}
+          {col.folderIcon(path) === 'cloud' ? (
+            <CloudStatusIcon />
+          ) : (
+            <Icon name={col.folderIcon(path) ?? 'folder'} size={15} />
+          )}
           <span className="fb-side-label">{col.folderName(path)}</span>
         </div>
         {open && kids.map((k) => treeNode(k, depth + 1))}

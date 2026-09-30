@@ -7,8 +7,9 @@ import StatusBar from './StatusBar';
 import Dialogs from './Dialogs';
 import RightDock from './RightDock';
 import PrintView from './PrintView';
-import Home, { homeAtLaunch } from './Home';
-import { designIdFromUrl } from './Comments';
+import Home, { GalleryPage, JournalPage, homeAtLaunch, readLaunchTo, type HomePage } from './Home';
+import { useLocation, useNavigate } from 'react-router';
+import { linkTarget } from './Comments';
 import { cloud } from '../lib/cloud';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
@@ -35,24 +36,46 @@ export default function App() {
   // a password-reset link lands here with a token in the URL
   const [resetToken] = useState<string | null>(() => resetTokenFromUrl());
   const [dialog, setDialog] = useState<DialogId | null>(() => (resetTokenFromUrl() ? 'account' : null));
-  // the home page opens at launch until the user picks local vs account
-  // …or when opened with a design's shared link
-  const [linkedId, setLinkedId] = useState(() => (cloud.available ? designIdFromUrl() : null));
-  const [showHome, setShowHome] = useState(() => !resetTokenFromUrl() && (homeAtLaunch() || !!linkedId));
-  const openDialog = (d: DialogId) => (d === 'home' ? setShowHome(true) : setDialog(d));
-  // a design link clicked inside the app (in a comment) only changes the hash
+  // Pages are routes (main.tsx has the router): #/ Home, #/design the
+  // designer, #/gallery(/<design id>), #/journal(/<post id>). Without
+  // accounts there are no pages; everything is the designer.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [, section, itemId] = location.pathname.split('/');
+  const page: HomePage | null = !cloud.available
+    ? null
+    : section === 'gallery'
+      ? 'gallery'
+      : section === 'journal'
+        ? 'journal'
+        : section === '' || section === undefined
+          ? 'home'
+          : null;
+  // the app opens on Home (a welcome the first time, then the user's own
+  // home), unless they'd rather go straight back to their design (Settings)
   useEffect(() => {
-    if (!cloud.available) return;
-    const onHash = () => {
-      const id = designIdFromUrl();
-      if (!id) return;
-      setDialog(null);
-      setLinkedId(id);
-      setShowHome(true);
-    };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    const toDesign = !cloud.available || !!resetToken || (!homeAtLaunch() && readLaunchTo() === 'design');
+    if (location.pathname === '/' && toDesign)
+      navigate({ pathname: '/design', search: location.search }, { replace: true });
+    // only at launch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // links in the form shared before routing (#design=<id>, #post=<id>) can
+  // still be clicked inside the app, which changes only the hash
+  useEffect(() => {
+    const fix = () => {
+      if (window.location.hash.startsWith('#/')) return;
+      const t = linkTarget(window.location.hash);
+      if (t.design) navigate(`/gallery/${t.design}`, { replace: true });
+      else if (t.post) navigate(`/journal/${t.post}`, { replace: true });
+    };
+    window.addEventListener('hashchange', fix);
+    return () => window.removeEventListener('hashchange', fix);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const go = (p: HomePage) => navigate(p === 'home' ? '/' : `/${p}`);
+  const closePages = () => navigate('/design');
+  const openDialog = (d: DialogId) => (d === 'home' ? go('home') : setDialog(d));
   const rightPanel = useStore((s) => s.rightPanel);
   const showPrint = useStore((s) => s.showPrint);
 
@@ -221,15 +244,38 @@ export default function App() {
           }}
         />
       )}
-      {showHome && (
+      {page === 'home' && (
         <Home
-          openId={linkedId}
-          onClose={() => {
-            if (linkedId) history.replaceState(null, '', location.pathname);
-            setLinkedId(null);
-            setShowHome(false);
-          }}
+          onClose={closePages}
+          onGo={go}
           onSignIn={() => setDialog('account')}
+          onOpenItem={(kind, id) => navigate(kind === 'design' ? `/gallery/${id}` : `/journal/${id}`)}
+          onNewDesign={() => {
+            if (useStore.getState().dirty && !confirm('Discard unsaved changes and start a new design?')) return;
+            closePages();
+            setDialog('new');
+          }}
+          onOpenFiles={() => {
+            closePages();
+            setDialog('open');
+          }}
+        />
+      )}
+      {page === 'gallery' && (
+        <GalleryPage
+          openId={itemId ?? null}
+          onOpen={(id) => navigate(id ? `/gallery/${id}` : '/gallery')}
+          onGo={go}
+          onClose={closePages}
+        />
+      )}
+      {page === 'journal' && (
+        <JournalPage
+          openId={itemId ?? null}
+          onOpen={(id) => navigate(id ? `/journal/${id}` : '/journal')}
+          onGo={go}
+          onClose={closePages}
+          onOpenDesign={(id) => navigate(`/gallery/${id}`)}
         />
       )}
       <Notice />

@@ -300,10 +300,12 @@ export interface StoreState {
   // cloud accounts (lib/cloud): optional; absent when not configured
   cloudAvailable: boolean;
   cloudUser: CloudUser | null;
+  cloudUsername: string | null; // from the profile, once picked
   cloudInfo: SyncInfo;
   libraryNonce: number; // bumped when a sync changes saved designs / palettes
   setCloudAvailable: (v: boolean) => void;
   setCloudUser: (u: CloudUser | null) => void;
+  setCloudUsername: (name: string | null) => void;
   setCloudInfo: (i: SyncInfo) => void;
   bumpLibrary: () => void;
   /** ⌘V: drop a copied object straight away, or enter paste mode for cells. */
@@ -966,10 +968,12 @@ export const useStore = create<StoreState>()(
 
     cloudAvailable: false,
     cloudUser: null,
+    cloudUsername: null,
     cloudInfo: { status: 'off', pending: 0 },
     libraryNonce: 0,
     setCloudAvailable: (v) => set({ cloudAvailable: v }),
-    setCloudUser: (u) => set({ cloudUser: u }),
+    setCloudUser: (u) => set(u ? { cloudUser: u } : { cloudUser: null, cloudUsername: null }),
+    setCloudUsername: (n) => set({ cloudUsername: n }),
     setCloudInfo: (i) => set({ cloudInfo: i }),
     bumpLibrary: () => set((s) => ({ libraryNonce: s.libraryNonce + 1 })),
 

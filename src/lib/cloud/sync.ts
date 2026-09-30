@@ -94,6 +94,8 @@ export interface SyncEngine {
   /** Upload this saved item if it isn't in the cloud yet; its cloud id, or
    *  null when it couldn't be sent (offline, signed out). For sharing. */
   ensureUploaded(collection: Collection, path: string): Promise<string | null>;
+  /** The Cloud Storage path of a cloud item id, if it's on this device. */
+  pathOfId(id: string): { collection: Collection; path: string } | null;
   info(): SyncInfo;
   setUser(user: CloudUser | null): void;
 }
@@ -501,6 +503,7 @@ export function createSyncEngine(
     stop,
     flush,
     ensureUploaded,
+    pathOfId: (id) => pathOf(id),
     info: () => ({ status, pending: pendingCount(), error, lastSync }),
     setUser,
   };

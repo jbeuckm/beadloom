@@ -11,6 +11,7 @@ import type {
   FolderRow,
   Friend,
   ItemRow,
+  Post,
   Profile,
   Reactions,
   TrashOriginRow,
@@ -32,6 +33,17 @@ interface Server {
   shares?: Array<{ item_id: string; grantee_id: string }>;
   reactions?: Array<{ item_id: string; user_id: string; liked: boolean; stars: number | null }>;
   comments?: Array<{ id: string; item_id: string; author_id: string; body: string; created_at: string }>;
+  posts?: Array<{
+    id: string;
+    author_id: string;
+    title: string;
+    body: string;
+    visibility: 'draft' | 'friends' | 'public';
+    design_ids: string[];
+    created_at: string;
+    updated_at: string;
+    published_at: string | null;
+  }>;
   /** Simulated outage: every request fails while set. */
   offline: boolean;
   /** Pretend the database is at this migration (default: current). */
@@ -54,18 +66,43 @@ const people = (s: Server) => {
   s.shares ??= [];
   s.reactions ??= [];
   s.comments ??= [];
-  return s as Server & Required<Pick<Server, 'profiles' | 'friendships' | 'shares' | 'reactions' | 'comments'>>;
+  s.posts ??= [];
+  return s as Server &
+    Required<Pick<Server, 'profiles' | 'friendships' | 'shares' | 'reactions' | 'comments' | 'posts'>>;
 };
-/** What private.can_see() allows: published designs, my own, shared with me. */
+/** What posts_read allows. */
+const canRead = (s: Server, p: NonNullable<Server['posts']>[number], uid: string | null) =>
+  p.visibility === 'public' ||
+  (!!uid && (p.author_id === uid || (p.visibility === 'friends' && areFriends(s, p.author_id, uid))));
+
+/** What private.can_see() allows: published designs, my own, shared with me,
+ *  and those in a post I can read. */
 const canSee = (s: Server, itemId: string, uid: string | null) => {
   const i = s.items.find((x) => x.id === itemId);
   if (!i || i.deleted_at) return false;
   if (i.published && i.collection === 'design') return true;
+  if (people(s).posts.some((p) => p.visibility !== 'draft' && p.design_ids.includes(itemId) && canRead(s, p, uid)))
+    return true;
   if (!uid) return false;
   return (
     i.owner_id === uid ||
     (people(s).shares.some((sh) => sh.item_id === itemId && sh.grantee_id === uid) && areFriends(s, i.owner_id, uid))
   );
+};
+const toPost = (s: Server, p: NonNullable<Server['posts']>[number], uid: string | null): Post => {
+  const a = uid ? people(s).profiles.find((x) => x.user_id === p.author_id) : undefined;
+  return {
+    id: p.id,
+    authorId: p.author_id,
+    author: a ? { id: a.user_id, username: a.username, avatar: a.avatar ?? null } : null,
+    title: p.title,
+    body: p.body,
+    visibility: p.visibility,
+    designIds: p.design_ids,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+    publishedAt: p.published_at,
+  };
 };
 const areFriends = (s: Server, a: string, b: string) =>
   people(s).friendships.some(
@@ -447,7 +484,7 @@ export function createFakeBackend(): CloudBackend & {
       const id = me();
       const s = people(load());
       const item = s.items.find((i) => i.id === itemId);
-      if (!item || item.owner_id === id || !canSee(s, itemId, id)) throw new Error('Saving your rating: not allowed');
+      if (!item || !canSee(s, itemId, id)) throw new Error('Saving your rating: not allowed');
       if (change.stars != null && !(change.stars >= 1 && change.stars <= 5)) throw new Error('Saving your rating: 1–5 stars');
       let r = s.reactions.find((x) => x.item_id === itemId && x.user_id === id);
       if (!r) s.reactions.push((r = { item_id: itemId, user_id: id, liked: false, stars: null }));
@@ -519,6 +556,69 @@ export function createFakeBackend(): CloudBackend & {
         publishedAt: i.published_at ?? '',
         owner: p ? { id: p.user_id, username: p.username, avatar: p.avatar ?? null } : null,
       };
+    },
+
+    // ---- posts ---------------------------------------------------------------
+    async posts({ mine, limit }) {
+      guard();
+      const uid = sessionUser?.id ?? null;
+      const s = people(load());
+      const list = mine
+        ? s.posts.filter((p) => p.author_id === me()).sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+        : s.posts
+            .filter((p) => p.visibility !== 'draft' && canRead(s, p, uid))
+            .sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''));
+      return list.slice(0, limit).map((p) => toPost(s, p, uid));
+    },
+    async post(postId) {
+      guard();
+      const uid = sessionUser?.id ?? null;
+      const s = people(load());
+      const p = s.posts.find((x) => x.id === postId);
+      return p && canRead(s, p, uid) && (p.visibility !== 'draft' || p.author_id === uid) ? toPost(s, p, uid) : null;
+    },
+    async savePost(d) {
+      guard();
+      const id = me();
+      const s = people(load());
+      if (!s.profiles.some((p) => p.user_id === id)) return { ok: false, error: 'Pick a username (in Account) before posting' };
+      if (!d.title.trim()) return { ok: false, error: 'Give it a title' };
+      if (d.designIds.some((x) => s.items.find((i) => i.id === x)?.owner_id !== id))
+        return { ok: false, error: 'Could not save the post' };
+      const now = new Date().toISOString();
+      let p = d.id ? s.posts.find((x) => x.id === d.id && x.author_id === id) : undefined;
+      if (d.id && !p) return { ok: false, error: 'Could not save the post' };
+      if (!p) {
+        p = {
+          id: crypto.randomUUID(),
+          author_id: id,
+          title: '',
+          body: '',
+          visibility: 'draft',
+          design_ids: [],
+          created_at: now,
+          updated_at: now,
+          published_at: null,
+        };
+        s.posts.push(p);
+      }
+      Object.assign(p, {
+        title: d.title.trim(),
+        body: d.body,
+        visibility: d.visibility,
+        design_ids: d.designIds,
+        updated_at: now,
+        published_at: d.visibility === 'draft' ? p.published_at : (p.published_at ?? now),
+      });
+      save(s);
+      return { ok: true, id: p.id };
+    },
+    async deletePost(postId) {
+      guard();
+      const id = me();
+      const s = people(load());
+      s.posts = s.posts.filter((p) => !(p.id === postId && p.author_id === id));
+      save(s);
     },
 
     fake: {

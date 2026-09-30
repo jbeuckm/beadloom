@@ -7,7 +7,7 @@ import { useStore } from '../store/useStore';
 import Modal from './Modal';
 import { cloud } from '../lib/cloud';
 import type { Friend, Reactions } from '../lib/cloud/backend';
-import { ReactionSummary } from './Reactions';
+import { ReactionBar } from './Reactions';
 import Comments, { ShareLinkButton } from './Comments';
 
 type Loaded = {
@@ -88,7 +88,7 @@ export default function ShareDialog({ path, name, onClose }: { path: string; nam
         )
       ) : (
         <div className="share">
-          <ReactionSummary r={state.reactions} />
+          <ReactionBar itemId={state.id} initial={state.reactions} canReact />
           <label className="check share-opt">
             <input type="checkbox" checked={published} onChange={(e) => setPublished(e.target.checked)} />
             <span>

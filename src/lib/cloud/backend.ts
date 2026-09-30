@@ -94,6 +94,29 @@ export interface Comment {
   canDelete: boolean;
 }
 
+/** A journal post about one or more of its author's designs. */
+export type PostVisibility = 'draft' | 'friends' | 'public';
+export interface Post {
+  id: string;
+  authorId: string;
+  /** Only when signed in: users are hidden from signed-out visitors. */
+  author: Profile | null;
+  title: string;
+  body: string;
+  visibility: PostVisibility;
+  designIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  publishedAt: string | null;
+}
+export interface PostDraft {
+  id?: string; // absent: a new post
+  title: string;
+  body: string;
+  visibility: PostVisibility;
+  designIds: string[];
+}
+
 export interface AuthResult {
   ok: boolean;
   error?: string; // a message fit to show
@@ -160,7 +183,7 @@ export interface CloudBackend {
   // ---- likes and ratings ----
   /** Totals for designs I can see (signed out: the gallery's), plus mine. */
   reactions(itemIds: string[]): Promise<Map<string, Reactions>>;
-  /** Like / unlike and rate (1–5, or null to clear) a design I can see but don't own. */
+  /** Like / unlike and rate (1–5, or null to clear) a design I can see, mine included. */
   react(itemId: string, change: { liked?: boolean; stars?: number | null }): Promise<void>;
 
   // ---- comments (signed in) and links ----
@@ -170,4 +193,13 @@ export interface CloudBackend {
   deleteComment(commentId: string): Promise<void>;
   /** One design I can see (a shared link lands on it); null if not. Works signed out for published ones. */
   design(itemId: string): Promise<GalleryItem | null>;
+
+  // ---- posts ----
+  /** Posts I can read, newest first: public ones, friends' and my own (with
+   *  drafts). `mine` narrows to my own. Works signed out (public only). */
+  posts(opts: { mine?: boolean; limit: number }): Promise<Post[]>;
+  post(postId: string): Promise<Post | null>;
+  /** Create or update one of my posts; its id. */
+  savePost(draft: PostDraft): Promise<AuthResult & { id?: string }>;
+  deletePost(postId: string): Promise<void>;
 }

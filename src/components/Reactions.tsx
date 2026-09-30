@@ -34,8 +34,8 @@ export function ReactionSummary({ r }: { r: Reactions | undefined }) {
 }
 
 /**
- * Like and rate. `canReact` false shows the totals only (signed out, or it's
- * your own design). Changes show at once and are saved in the background.
+ * Like and rate. `canReact` false (signed out) shows the totals only. Changes
+ * show at once and are saved in the background.
  */
 export function ReactionBar({
   itemId,
@@ -102,7 +102,7 @@ export function ReactionBar({
       </span>
       <span className="hint">
         {r.ratings ? `${fmt(r.average)} from ${r.ratings} rating${r.ratings === 1 ? '' : 's'}` : 'No ratings yet'}
-        {!canReact && (signedIn ? ' · your design' : ' · sign in to like and rate')}
+        {!canReact && !signedIn && ' · sign in to like and rate'}
       </span>
     </div>
   );

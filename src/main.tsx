@@ -1,5 +1,7 @@
 import { createRoot } from 'react-dom/client';
+import { HashRouter } from 'react-router';
 import App from './components/App';
+import { linkTarget } from './components/Comments';
 import './styles.css';
 
 import { useStore } from './store/useStore';
@@ -27,7 +29,26 @@ if (import.meta.env.DEV) {
   ).__beadloomComposite = () => compositeLayers(useStore.getState().design);
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+// Pages are hash routes (#/, #/design, #/gallery/<id>, #/journal/<id>): the
+// app is served from any sub-path with relative assets (vite base './'), and
+// hash routes need nothing from the server to survive a reload. Links shared
+// before routing (#design=<id>, #post=<id>) are turned into their routes.
+{
+  const old = linkTarget(location.hash);
+  if (!location.hash.startsWith('#/') && (old.design || old.post))
+    history.replaceState(null, '', `${location.pathname}#/${old.design ? 'gallery/' + old.design : 'journal/' + old.post}`);
+  // a password-reset email sent before routing: #auth=reset?token=…
+  else if (location.hash.startsWith('#auth='))
+    history.replaceState(null, '', `${location.pathname}#/design?${location.hash.slice(1).replace('?', '&')}`);
+  // a bare address is the home route
+  else if (!location.hash) history.replaceState(null, '', `${location.pathname}${location.search}#/`);
+}
+
+createRoot(document.getElementById('root')!).render(
+  <HashRouter>
+    <App />
+  </HashRouter>,
+);
 
 // PWA: register the runtime-cache service worker in production builds. Its
 // URL is resolved against the page, so the scope follows the deploy sub-path.

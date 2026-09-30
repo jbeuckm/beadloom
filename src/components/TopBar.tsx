@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../store/useStore';
+import { cloudStatusText } from '../lib/cloud/status';
+import CloudStatusIcon from './CloudStatus';
+import { LogoMark } from './Brand';
 import Menu, { MenuItem } from './Menu';
 import { Icon } from './icons';
 import { downloadText, exportPNG, pickTextFile } from '../lib/designFormat';
@@ -148,9 +151,8 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
 
   return (
     <div className="topbar">
-      <div className="brand">
-        Grid <small>Designer</small>
-      </div>
+      {/* back to the home page; without accounts there is none, just the name */}
+      {s.cloudAvailable ? <HomeButton onClick={() => onDialog('home')} /> : <div className="brand">Chromattice</div>}
 
       <Menu
         title="File menu"
@@ -249,7 +251,6 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
       <div className="spacer" />
 
       <LoomSize />
-      <HomeButton onClick={() => onDialog('home')} />
       <AccountButton onClick={() => onDialog('account')} />
     </div>
   );
@@ -260,8 +261,8 @@ function HomeButton({ onClick }: { onClick: () => void }) {
   const available = useStore((s) => s.cloudAvailable);
   if (!available) return null;
   return (
-    <button className="btn icon-btn" onClick={onClick} aria-label="Home" title="Home: gallery and account options">
-      <Icon name="home" size={18} />
+    <button className="btn icon-btn home-btn" onClick={onClick} aria-label="Home" title="Home">
+      <LogoMark size={28} />
     </button>
   );
 }
@@ -270,33 +271,32 @@ function HomeButton({ onClick }: { onClick: () => void }) {
 function AccountButton({ onClick }: { onClick: () => void }) {
   const available = useStore((s) => s.cloudAvailable);
   const user = useStore((s) => s.cloudUser);
+  const username = useStore((s) => s.cloudUsername);
   const info = useStore((s) => s.cloudInfo);
   if (!available) return null;
   if (!user)
     return (
-      <button className="btn account-btn" onClick={onClick} aria-label="Account" title="Sign in to sync your designs">
+      <button className="btn account-btn" onClick={onClick} aria-label="Account" title="Sign in to use Cloud Storage">
         <Icon name="user" size={16} /> Sign in
       </button>
     );
-  const label =
-    info.status === 'syncing'
-      ? 'Syncing…'
-      : info.status === 'offline'
-        ? `Offline${info.pending ? ` · ${info.pending} waiting` : ''}`
-        : info.status === 'error'
-          ? 'Sync problem'
-          : info.pending
-            ? `${info.pending} to sync`
-            : 'Synced';
+  // who you are, and a cloud that says how Cloud Storage is doing
+  const text = cloudStatusText(info);
   return (
     <button
       className={'btn account-btn ' + info.status}
       onClick={onClick}
       aria-label="Account"
-      title={`${user.email} — ${info.error ?? label}`}
+      title={`${username ? '@' + username : user.email} — ${text}`}
     >
-      <Icon name={info.status === 'offline' || info.status === 'error' ? 'cloud-off' : 'cloud'} size={16} />
-      <span className="account-status">{label}</span>
+      <CloudStatusIcon size={16} />
+      <span className="account-name">{username ? '@' + username : user.name || user.email.split('@')[0]}</span>
+      {info.pending > 0 && (
+        <span className="account-pending" aria-label={text}>
+          {info.pending}
+        </span>
+      )}
     </button>
   );
 }
+

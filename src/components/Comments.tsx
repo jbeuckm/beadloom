@@ -107,17 +107,29 @@ export default function Comments({ itemId, onCount }: { itemId: string; onCount?
   );
 }
 
-/** The link that opens a design on the home page (#design=<id>). */
-export const designLink = (id: string) => `${location.origin}${location.pathname}#design=${id}`;
-/** The design id in a shared link, if the page was opened with one. */
-export const designIdFromUrl = (): string | null =>
-  /(?:^|[#&])design=([0-9a-f-]{36})/i.exec(location.hash)?.[1] ?? null;
+// Pages are hash routes (see main.tsx): #/gallery/<id> shows a design in the
+// Gallery, #/journal/<id> a post. Links first shared as #design=<id> and
+// #post=<id> still work.
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 
-/** Share a design's link: the system share sheet where there is one, else copy it. */
-export function ShareLinkButton({ id, name }: { id: string; name: string }) {
+/** The link that opens a design in the Gallery. */
+export const designLink = (id: string) => `${location.origin}${location.pathname}#/gallery/${id}`;
+/** The link that opens a post in the Journal. */
+export const postLink = (id: string) => `${location.origin}${location.pathname}#/journal/${id}`;
+
+/** What a link's hash points at: a design, a post, or neither. */
+export function linkTarget(hash: string): { design?: string; post?: string } {
+  const design = new RegExp(`^#/gallery/(${UUID})|(?:^#|&)design=(${UUID})`, 'i').exec(hash);
+  if (design) return { design: design[1] ?? design[2] };
+  const post = new RegExp(`^#/journal/(${UUID})|(?:^#|&)post=(${UUID})`, 'i').exec(hash);
+  return post ? { post: post[1] ?? post[2] } : {};
+}
+
+/** Share a design's (or post's) link: the system share sheet where there is one, else copy it. */
+export function ShareLinkButton({ id, name, kind = 'design' }: { id: string; name: string; kind?: 'design' | 'post' }) {
   const notify = useStore((s) => s.notify);
   const share = async () => {
-    const url = designLink(id);
+    const url = kind === 'post' ? postLink(id) : designLink(id);
     try {
       if (navigator.share) {
         await navigator.share({ title: `${name} — Chromattice`, url });
@@ -138,7 +150,7 @@ export function ShareLinkButton({ id, name }: { id: string; name: string }) {
 
 // ---- links in comments -------------------------------------------------------
 
-const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/gi;
+export const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/gi;
 
 /** A comment's text with its links clickable, and a preview card per link. */
 function CommentText({ body }: { body: string }) {
@@ -178,9 +190,9 @@ function CommentText({ body }: { body: string }) {
 }
 
 /** Our own design links get the design itself; anything else, where it goes. */
-function LinkCard({ url }: { url: URL }) {
+export function LinkCard({ url }: { url: URL }) {
   const own = url.origin === location.origin && url.pathname === location.pathname;
-  const id = own ? /(?:^|[#&])design=([0-9a-f-]{36})/i.exec(url.hash)?.[1] : undefined;
+  const id = own ? linkTarget(url.hash).design : undefined;
   return id ? <DesignCard id={id} /> : <SiteCard url={url} />;
 }
 

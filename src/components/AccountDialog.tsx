@@ -7,6 +7,7 @@ import Modal from './Modal';
 import Friends from './Friends';
 import { Icon } from './icons';
 import { cloud, clearAuthUrl, resetRedirectUrl } from '../lib/cloud';
+import { cloudStatusText } from '../lib/cloud/status';
 
 type Mode = 'signin' | 'signup' | 'forgot' | 'reset' | 'account';
 
@@ -28,6 +29,7 @@ export default function AccountDialog({
   const [mode, setMode] = useState<Mode>(resetToken ? 'reset' : user ? 'account' : 'signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,15 +91,10 @@ export default function AccountDialog({
             : 'Sign in';
 
   const statusLine =
-    info.status === 'syncing'
-      ? 'Syncing…'
-      : info.status === 'offline'
-        ? `Offline — ${info.pending} change${info.pending === 1 ? '' : 's'} will sync when you're back online`
-        : info.status === 'error'
-          ? `Sync problem: ${info.error ?? 'request failed'}`
-          : info.pending
-            ? `${info.pending} change${info.pending === 1 ? '' : 's'} waiting to sync`
-            : `Everything is synced${info.lastSync ? ` · ${new Date(info.lastSync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}`;
+    cloudStatusText(info) +
+    (info.status === 'synced' && !info.pending && info.lastSync
+      ? ` · ${new Date(info.lastSync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+      : '');
 
   return (
     <Modal title={title} onClose={onClose}>
@@ -178,14 +175,29 @@ export default function AccountDialog({
               {mode !== 'forgot' && (
                 <div className="field">
                   <label>{mode === 'reset' ? 'New password' : 'Password'}</label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-                    minLength={mode === 'signin' ? undefined : 8}
-                    required
-                  />
+                  <div className="pw-field">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      minLength={mode === 'signin' ? undefined : 8}
+                      required
+                    />
+                    {/* see what was typed, or what the browser filled in */}
+                    <button
+                      type="button"
+                      className="pw-eye"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      aria-pressed={showPassword}
+                      onClick={() => setShowPassword((v) => !v)}
+                    >
+                      <Icon name={showPassword ? 'eye-off' : 'eye'} size={18} />
+                    </button>
+                  </div>
                   {mode !== 'signin' && <span className="hint">At least 8 characters</span>}
                 </div>
               )}

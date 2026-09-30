@@ -19,6 +19,7 @@ export default function Friends() {
     try {
       const p = await backend.myProfile();
       setMe(p);
+      useStore.getState().setCloudUsername(p?.username ?? null);
       setFriends(p ? await backend.friends() : []);
       setError(null);
     } catch (e) {

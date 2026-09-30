@@ -9,7 +9,7 @@ import { createFakeBackend } from './fake';
 import { createNeonBackend } from './neon';
 import { createSyncEngine, type SyncEngine } from './sync';
 import { cloudConfig } from './config';
-import { setCloudStoreOpen } from '../stores';
+import { inCloudStorage, setCloudStoreOpen } from '../stores';
 import { createActivityWatcher, deliver, type ActivityWatcher } from './activity';
 
 export { FAKE_FLAG } from './config';
@@ -40,15 +40,30 @@ function init(): Cloud {
   const activity = createActivityWatcher(
     backend,
     (e) => void deliver(e, (text) => store().notify(text)),
-    (id) => `${location.origin}${location.pathname}#design=${id}`,
+    (id) => `${location.origin}${location.pathname}#/gallery/${id}`,
+    (id) => `${location.origin}${location.pathname}#/journal/${id}`,
   );
 
+  let lastUserId: string | null | undefined; // undefined: not known yet
   const apply = (u: Parameters<SyncEngine['setUser']>[0]) => {
+    // another account (or none): the open design and palette no longer belong
+    // to a Cloud Storage file here, so they stay open but unsaved
+    if (lastUserId !== undefined && lastUserId !== (u?.id ?? null)) {
+      const s = store();
+      if (inCloudStorage(s.slotPath)) useStore.setState({ slotPath: null, dirty: true });
+      if (inCloudStorage(s.paletteSlotPath)) useStore.setState({ paletteSlotPath: null });
+    }
+    lastUserId = u?.id ?? null;
     setCloudStoreOpen(!!u); // Cloud Storage shows in the browsers only while signed in
     store().setCloudUser(u);
     engine.setUser(u);
     activity.setUser(u);
     store().bumpLibrary();
+    if (u)
+      backend!
+        .myProfile()
+        .then((p) => store().cloudUser?.id === u.id && store().setCloudUsername(p?.username ?? null))
+        .catch(() => {});
   };
   backend.onUserChange(apply);
   backend
@@ -64,8 +79,9 @@ function init(): Cloud {
 
 export const cloud: Cloud = init();
 
-/** The URL a password-reset email should send the user back to. */
-export const resetRedirectUrl = () => `${location.origin}${location.pathname}#auth=reset`;
+/** The URL a password-reset email should send the user back to: the
+ *  designer, where the Account dialog opens with the new-password form. */
+export const resetRedirectUrl = () => `${location.origin}${location.pathname}#/design?auth=reset`;
 
 /** A reset token in the page URL (`#auth=reset?token=…` or `?auth=reset&token=…`), if any. */
 export function resetTokenFromUrl(): string | null {
@@ -82,5 +98,5 @@ export function resetTokenFromUrl(): string | null {
 
 /** Drop the reset token from the address bar once it's been used. */
 export function clearAuthUrl() {
-  history.replaceState(null, '', location.pathname);
+  history.replaceState(null, '', `${location.pathname}#/design`);
 }

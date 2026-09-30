@@ -41,7 +41,7 @@ async function saveAs(page: Page, name: string) {
 }
 
 test('without cloud config the app is local-only: no account button', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/design');
   await waitForReady(page);
   expect((await cloudState(page)).available).toBe(false);
   await expect(page.getByRole('button', { name: 'Account' })).toHaveCount(0);
@@ -51,12 +51,15 @@ test('sign up, save to Cloud Storage, rename: every change reaches the cloud; an
   page,
 }) => {
   await useFakeCloud(page);
-  await page.goto('/');
+  await page.goto('/#/design');
   await waitForReady(page);
   await expect(page.getByRole('button', { name: 'Account' })).toHaveText(/Sign in/);
   await signUp(page, 'ann@example.com', 'correct-horse');
   await page.locator('.modal').getByRole('button', { name: 'Done' }).click();
-  await expect(page.getByRole('button', { name: 'Account' })).toHaveText(/Synced/);
+  // the button says who's signed in; its cloud says how Cloud Storage is doing
+  const account = page.getByRole('button', { name: 'Account' });
+  await expect(account).toHaveText('Tester');
+  await expect(account).toHaveAttribute('title', 'ann@example.com — Cloud Storage is up to date');
 
   // signed in, Save As opens in Cloud Storage; a save there syncs on its own
   await pickTool(page, 'Pen');
@@ -126,7 +129,7 @@ test('sign up, save to Cloud Storage, rename: every change reaches the cloud; an
 
 test('offline: saves queue, the status says so, and they sync when back', async ({ page }) => {
   await useFakeCloud(page);
-  await page.goto('/');
+  await page.goto('/#/design');
   await waitForReady(page);
   await signUp(page, 'bo@example.com', 'correct-horse');
   await page.locator('.modal').getByRole('button', { name: 'Done' }).click();
@@ -135,7 +138,18 @@ test('offline: saves queue, the status says so, and they sync when back', async 
   await saveAs(page, 'Offline One');
   await expect.poll(async () => (await cloudState(page)).status).toBe('offline');
   expect((await cloudState(page)).pending).toBe(1);
-  await expect(page.getByRole('button', { name: 'Account' })).toHaveText(/Offline · 1 waiting/);
+  const account = page.getByRole('button', { name: 'Account' });
+  await expect(account.locator('.account-pending')).toHaveText('1');
+  await expect(account).toHaveAttribute(
+    'title',
+    "bo@example.com — Offline — 1 Cloud Storage change will upload when you're back online",
+  );
+  await openFileMenu(page, /⊟ Open/);
+  await expect(page.locator('.modal .fb-side-item', { hasText: 'Cloud Storage' }).locator('.cloud-status')).toHaveAttribute(
+    'aria-label',
+    "Offline — 1 Cloud Storage change will upload when you're back online",
+  );
+  await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
   expect((await cloudDump(page)).items).toHaveLength(0); // nothing got through
   expect(await page.evaluate(() => 'Offline One' in JSON.parse(localStorage['beadloom.cloud.designs']))).toBe(true); // but it's saved on the device
 
@@ -144,14 +158,15 @@ test('offline: saves queue, the status says so, and they sync when back', async 
   await page.locator('.modal').getByRole('button', { name: 'Sync now' }).click();
   await expect.poll(async () => (await cloudState(page)).status).toBe('synced');
   expect((await cloudDump(page)).items.map((i) => i.path)).toEqual(['Offline One']);
-  await expect(page.locator('.modal')).toContainText('Everything is synced');
+  await expect(page.locator('.modal')).toContainText('Cloud Storage is up to date');
+  await expect(page.getByRole('button', { name: 'Account' }).locator('.account-pending')).toHaveCount(0);
 });
 
 test('Local Storage never syncs; moving a design into Cloud Storage uploads it, and back takes it off', async ({
   page,
 }) => {
   await useFakeCloud(page);
-  await page.goto('/');
+  await page.goto('/#/design');
   await waitForReady(page);
   await saveAs(page, 'Local One'); // signed out: Local Storage is all there is
   expect((await snapshot(page)).slotPath).toBe('Local Storage/Local One');
@@ -190,7 +205,7 @@ test('forgot password: the emailed link opens the reset form; the new password w
   page,
 }) => {
   await useFakeCloud(page);
-  await page.goto('/');
+  await page.goto('/#/design');
   await waitForReady(page);
   await signUp(page, 'dee@example.com', 'first-password');
   await page.locator('.modal').getByRole('button', { name: 'Sign out' }).click();
@@ -215,7 +230,7 @@ test('forgot password: the emailed link opens the reset form; the new password w
   await page.locator('.modal input[type="password"]').fill('second-password');
   await page.locator('.modal').getByRole('button', { name: 'Change password' }).click();
   await expect(page.locator('.notice')).toHaveText(/Password changed/);
-  expect(await page.evaluate(() => location.hash)).toBe('');
+  expect(await page.evaluate(() => location.hash)).toBe('#/design'); // the token's gone from the address
 
   await page.locator('.modal input[type="email"]').fill('dee@example.com');
   await page.locator('.modal input[type="password"]').fill('second-password');
@@ -236,7 +251,7 @@ test('an out-of-date database blocks sync with a plain message; the app tracks t
   expect(required).toBe(newest);
 
   await useFakeCloud(page);
-  await page.goto('/');
+  await page.goto('/#/design');
   await waitForReady(page);
   await page.evaluate(() => (window as any).__beadloomCloudFake.setSchemaVersion(0));
   await page.getByRole('button', { name: 'Account' }).click();
@@ -257,7 +272,7 @@ test('an out-of-date database blocks sync with a plain message; the app tracks t
 
 test('palettes have Local and Cloud Storage too; only Cloud Storage syncs', async ({ page }) => {
   await useFakeCloud(page);
-  await page.goto('/');
+  await page.goto('/#/design');
   await waitForReady(page);
   await signUp(page, 'pal@example.com', 'correct-horse');
   await page.locator('.modal').getByRole('button', { name: 'Done' }).click();
@@ -280,4 +295,20 @@ test('palettes have Local and Cloud Storage too; only Cloud Storage syncs', asyn
   expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage['beadloom.palettes'] || '{}')))).toEqual([
     'Kept Here',
   ]);
+});
+
+test('the eye button shows and hides the password, typed or filled in', async ({ page }) => {
+  await useFakeCloud(page);
+  await page.goto('/#/design');
+  await waitForReady(page);
+  await page.getByRole('button', { name: 'Account' }).click();
+  const m = page.locator('.modal');
+  const field = m.locator('.pw-field input');
+  await field.fill('saved-by-the-browser'); // as a password manager would
+  await expect(field).toHaveAttribute('type', 'password');
+  await m.getByRole('button', { name: 'Show password' }).click();
+  await expect(field).toHaveAttribute('type', 'text');
+  await expect(field).toHaveValue('saved-by-the-browser');
+  await m.getByRole('button', { name: 'Hide password' }).click();
+  await expect(field).toHaveAttribute('type', 'password');
 });

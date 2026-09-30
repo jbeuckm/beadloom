@@ -10,7 +10,7 @@
 
 import type { CloudBackend, CloudUser } from './backend';
 
-export type ActivityKind = 'friendRequest' | 'friendAccepted' | 'sharedWithMe' | 'comment' | 'reaction';
+export type ActivityKind = 'friendRequest' | 'friendAccepted' | 'sharedWithMe' | 'comment' | 'reaction' | 'friendPost';
 
 export const ACTIVITY_KINDS: Array<{ kind: ActivityKind; label: string; hint: string }> = [
   { kind: 'friendRequest', label: 'Friend requests', hint: 'Someone asks to be your friend' },
@@ -18,6 +18,7 @@ export const ACTIVITY_KINDS: Array<{ kind: ActivityKind; label: string; hint: st
   { kind: 'sharedWithMe', label: 'Shared with me', hint: 'A friend shares a design with you' },
   { kind: 'comment', label: 'Comments', hint: 'Someone comments on one of your designs' },
   { kind: 'reaction', label: 'Likes and ratings', hint: 'Someone likes or rates one of your designs' },
+  { kind: 'friendPost', label: 'Friends’ posts', hint: 'A friend publishes a journal post' },
 ];
 
 export interface NotifyPrefs {
@@ -27,6 +28,8 @@ export interface NotifyPrefs {
 }
 
 const PREFS_KEY = 'beadloom.notify';
+const LOG_KEY = (uid: string) => `beadloom.activity.log.${uid}`;
+const LOG_MAX = 50;
 const SEEN_KEY = (uid: string) => `beadloom.activity.${uid}`;
 const EVERY_MS = 60_000;
 
@@ -56,11 +59,39 @@ export interface ActivityEvent {
   url?: string;
 }
 
+/** An event as kept in the history Home shows: every one, whatever the
+ *  notification settings (those decide only what pops up). */
+export interface LoggedEvent extends ActivityEvent {
+  at: string; // ISO
+}
+
+/** The signed-in user's recent activity on this device, newest first. */
+export function readActivityLog(uid: string): LoggedEvent[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(LOG_KEY(uid)) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function logActivity(uid: string, events: ActivityEvent[]) {
+  if (!events.length) return;
+  const at = new Date().toISOString();
+  const next = [...events.map((e) => ({ ...e, at })), ...readActivityLog(uid)].slice(0, LOG_MAX);
+  try {
+    localStorage.setItem(LOG_KEY(uid), JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  window.dispatchEvent(new CustomEvent('chromattice:activity'));
+}
+
 interface Seen {
   incoming: string[];
   friends: string[];
   shared: string[];
   stats: Record<string, { likes: number; ratings: number; comments: number }>;
+  posts?: string[]; // friends' published posts (absent in older snapshots)
 }
 
 export interface ActivityWatcher {
@@ -73,6 +104,7 @@ export function createActivityWatcher(
   backend: CloudBackend,
   show: (e: ActivityEvent) => void,
   linkTo: (designId: string) => string,
+  linkToPost: (postId: string) => string,
 ): ActivityWatcher {
   let user: CloudUser | null = null;
   let timer: number | null = null;
@@ -94,16 +126,20 @@ export function createActivityWatcher(
   };
 
   async function look(u: CloudUser): Promise<ActivityEvent[]> {
-    const [friends, shared, mine] = await Promise.all([
+    const [friends, shared, mine, posts] = await Promise.all([
       backend.friends(),
       backend.sharedWithMe(),
       backend.myVisibleDesigns(),
+      backend.posts({ limit: 30 }),
     ]);
+    const friendIds = new Set(friends.filter((f) => f.status === 'friends').map((f) => f.user.id));
+    const friendPosts = posts.filter((p) => friendIds.has(p.authorId));
     const stats = await backend.reactions(mine.map((d) => d.id));
     const now: Seen = {
       incoming: friends.filter((f) => f.status === 'incoming').map((f) => f.user.id),
       friends: friends.filter((f) => f.status === 'friends').map((f) => f.user.id),
       shared: shared.map((i) => i.id),
+      posts: friendPosts.map((p) => p.id),
       stats: Object.fromEntries(
         mine.map((d) => {
           const r = stats.get(d.id);
@@ -131,6 +167,15 @@ export function createActivityWatcher(
           title: 'Shared with you',
           body: `@${item.owner?.username ?? 'a friend'} shared “${item.path.split('/').pop()}”`,
         });
+    if (before.posts)
+      for (const p of friendPosts)
+        if (!before.posts.includes(p.id))
+          events.push({
+            kind: 'friendPost',
+            title: `@${p.author?.username ?? 'A friend'} posted`,
+            body: p.title,
+            url: linkToPost(p.id),
+          });
     for (const d of mine) {
       const was = before.stats[d.id] ?? { likes: 0, ratings: 0, comments: 0 };
       const is = now.stats[d.id];
@@ -167,6 +212,7 @@ export function createActivityWatcher(
     const u = user;
     checking = look(u)
       .then((events) => {
+        logActivity(u.id, events);
         const prefs = readNotifyPrefs();
         const wanted = events.filter((e) => prefs.kinds[e.kind]);
         if (user?.id === u.id) wanted.forEach(show);

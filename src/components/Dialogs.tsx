@@ -8,6 +8,7 @@ import { cloud } from '../lib/cloud';
 import type { Reactions, SharedItem } from '../lib/cloud/backend';
 import { ReactionBar } from './Reactions';
 import Comments, { ShareLinkButton } from './Comments';
+import { PostEditor } from './Posts';
 import AccountDialog from './AccountDialog';
 import SettingsDialog from './SettingsDialog';
 import { describeDesign } from '../lib/library';
@@ -286,6 +287,7 @@ function DesignBrowser({ mode, onClose }: { mode: 'open' | 'save'; onClose: () =
   const user = useStore((st) => st.cloudUser);
   const [sharing, setSharing] = useState<{ path: string; name: string } | null>(null);
   const [rating, setRating] = useState<{ id: string; name: string } | null>(null);
+  const [writing, setWriting] = useState<string | null>(null); // a Cloud Storage path
   const shared = useSharedWithMe(!!user && mode === 'open');
 
   const useAsPicture = async (path: string, name: string) => {
@@ -309,6 +311,13 @@ function DesignBrowser({ mode, onClose }: { mode: 'open' | 'save'; onClose: () =
           hint: 'Only files in Cloud Storage can be shared',
           run: (e) => setSharing({ path: cloudInnerPath(e.path), name: e.name }),
         },
+        {
+          label: 'Write about this…',
+          icon: 'pencil',
+          when: (e) => inCloudStorage(e.path),
+          hint: 'Only designs in Cloud Storage can go in a post',
+          run: (e) => setWriting(cloudInnerPath(e.path)),
+        },
         { label: 'Use as profile picture', icon: 'user', run: (e) => void useAsPicture(e.path, e.name) },
         // shared-with-me entries are keyed by the item's cloud id
         { label: 'Like & comment…', icon: 'heart', readonly: true, run: (e) => setRating({ id: e.path, name: e.name }) },
@@ -319,6 +328,9 @@ function DesignBrowser({ mode, onClose }: { mode: 'open' | 'save'; onClose: () =
     <>
       {sharing && <ShareDialog path={sharing.path} name={sharing.name} onClose={() => setSharing(null)} />}
       {rating && <RateDialog id={rating.id} name={rating.name} onClose={() => setRating(null)} />}
+      {writing && (
+        <PostEditor post={null} initialPaths={[writing]} onClose={() => setWriting(null)} onSaved={() => setWriting(null)} />
+      )}
       <DesignFiles mode={mode} onClose={onClose} virtual={shared} fileActions={fileActions} />
     </>
   );
