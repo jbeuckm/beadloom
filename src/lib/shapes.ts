@@ -340,3 +340,24 @@ export function shapeGridBBox(g: ShapeGeom) {
     maxY: Math.max(...ys) + pad + 1,
   };
 }
+
+/** A Selburose on an N×N grid (N even, so its axes fall between cells), its
+ *  cells sorted into the eight petals: each to the petal covering most of it. */
+export function selburosePetals(N: number): Array<Array<[number, number]>> {
+  const c = N / 2;
+  const star = { cx: c, cy: c, outerR: c, rotationDeg: 0, gap: 0 };
+  const quads = selburoseParallelograms(star);
+  const petals: Array<Array<[number, number]>> = quads.map(() => []);
+  for (const [x, y] of selburoseCells(star, N, N, 'fill', 0.5)) {
+    let best = 0;
+    let most = -1;
+    quads.forEach((q, i) => {
+      let hits = 0;
+      for (let sy = 0; sy < 4; sy++)
+        for (let sx = 0; sx < 4; sx++) if (pointInPolygon(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4, q)) hits++;
+      if (hits > most) [best, most] = [i, hits];
+    });
+    petals[best].push([x, y]);
+  }
+  return petals;
+}
