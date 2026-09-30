@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from 'react';
 import CloudStatusIcon from './CloudStatus';
+import Menu, { MenuItem } from './Menu';
 import { Icon, type IconName } from './icons';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
@@ -1078,17 +1079,26 @@ export default function FileBrowser({
             <button className="btn mini" disabled={!selected.length} onClick={duplicate}>
               <Icon name="copy" size={15} /> {readonlySel ? 'Copy to ' + col.rootName : 'Duplicate'}
             </button>
-            {fileActions.filter((a) => !!a.readonly === (loc.kind === 'virtual')).map((a) => (
-              <button
-                key={a.label}
-                className="btn mini"
-                disabled={!canAct(a)}
-                title={actionable && !canAct(a) ? a.hint : undefined}
-                onClick={() => actionable && a.run(actionable)}
-              >
-                <Icon name={a.icon} size={15} /> {a.label}
-              </button>
-            ))}
+            {/* the rest (sharing, writing about it…) under More, so the bar stays about files */}
+            {fileActions.some((a) => !!a.readonly === (loc.kind === 'virtual')) && (
+              <Menu title="More actions" label={<>More <Icon name="chevron-down" size={14} /></>}>
+                {(close) =>
+                  fileActions
+                    .filter((a) => !!a.readonly === (loc.kind === 'virtual'))
+                    .map((a) => (
+                      <MenuItem
+                        key={a.label}
+                        close={close}
+                        disabled={!canAct(a)}
+                        title={actionable && !canAct(a) ? a.hint : !actionable ? 'Select a file first' : undefined}
+                        onClick={() => actionable && a.run(actionable)}
+                      >
+                        <Icon name={a.icon} size={15} /> {a.label}
+                      </MenuItem>
+                    ))
+                }
+              </Menu>
+            )}
             <select
               className="fb-move"
               aria-label={readonlySel ? 'Copy to folder' : 'Move to folder'}

@@ -3,7 +3,7 @@
 
 import { useMemo } from 'react';
 import '@fontsource/josefin-sans/latin-700.css';
-import { pointInPolygon, selburoseCells, selburoseParallelograms } from '../lib/shapes';
+import { selburosePetals } from '../lib/shapes';
 
 // ---- Southwest branding: a stepped-diamond lattice logo, mesas, a zigzag band
 
@@ -28,29 +28,10 @@ const CRAFTS: Array<{ craft: Craft; label: string }> = [
 ];
 
 const PETAL_COLOURS = [SW.terracotta, SW.turquoise, SW.ochre, SW.plum];
-// the big logo sits on a terracotta sky: cream in place of terracotta
+// the big logo sits on a terracotta sky: cream in place of terracotta (the
+// favicon, scripts/make-favicon.mjs, uses these too)
 const HERO_COLOURS = [SW.cream, SW.turquoise, SW.ochre, SW.plum];
 
-/** A Selburose on an N×N grid (N even, so its axes fall between cells), its
- *  cells sorted into the eight petals: each to the petal covering most of it. */
-function selburosePetals(N: number): Array<Array<[number, number]>> {
-  const c = N / 2;
-  const star = { cx: c, cy: c, outerR: c, rotationDeg: 0, gap: 0 };
-  const quads = selburoseParallelograms(star);
-  const petals: Array<Array<[number, number]>> = quads.map(() => []);
-  for (const [x, y] of selburoseCells(star, N, N, 'fill', 0.5)) {
-    let best = 0;
-    let most = -1;
-    quads.forEach((q, i) => {
-      let hits = 0;
-      for (let sy = 0; sy < 4; sy++)
-        for (let sx = 0; sx < 4; sx++) if (pointInPolygon(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4, q)) hits++;
-      if (hits > most) [best, most] = [i, hits];
-    });
-    petals[best].push([x, y]);
-  }
-  return petals;
-}
 
 /** The mark, simplified for small sizes (the designer's Home button): a
  *  coarser Selburose, flat pixels, a colour per petal. */
@@ -170,10 +151,9 @@ function Cell({ x, y, fill, craft }: { x: number; y: number; fill: string; craft
         </g>
       );
     case 'knit':
-      // a knit stitch: two legs of a V, on the fabric's darker ground
+      // a knit stitch: two legs of a V
       return (
         <g>
-          <rect x={x} y={y} width={1} height={1} fill={shade(fill, -0.4)} />
           <ellipse cx={x + 0.32} cy={cy} rx={0.19} ry={0.46} transform={`rotate(-28 ${x + 0.32} ${cy})`} fill={fill} stroke={shade(fill, -0.3)} strokeWidth={0.05} />
           <ellipse cx={x + 0.68} cy={cy} rx={0.19} ry={0.46} transform={`rotate(28 ${x + 0.68} ${cy})`} fill={shade(fill, 0.08)} stroke={shade(fill, -0.3)} strokeWidth={0.05} />
         </g>

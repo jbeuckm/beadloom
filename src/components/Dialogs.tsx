@@ -4,7 +4,7 @@ import Modal from './Modal';
 import FileBrowser, { type FileAction, type VirtualLocation } from './FileBrowser';
 import ShareDialog from './ShareDialog';
 import { avatarFromDesign } from './Avatar';
-import { cloud } from '../lib/cloud';
+import { cloud, syncOnLook } from '../lib/cloud';
 import type { Reactions, SharedItem } from '../lib/cloud/backend';
 import { ReactionBar } from './Reactions';
 import Comments, { ShareLinkButton } from './Comments';
@@ -12,7 +12,7 @@ import { PostEditor } from './Posts';
 import AccountDialog from './AccountDialog';
 import SettingsDialog from './SettingsDialog';
 import { describeDesign } from '../lib/library';
-import { cloudInnerPath, designLibrary, inCloudStorage } from '../lib/stores';
+import { CLOUD_STORAGE, cloudInnerPath, designLibrary, inCloudStorage } from '../lib/stores';
 import { Icon } from './icons';
 import type { DialogId } from './TopBar';
 import * as storage from '../lib/storage';
@@ -23,24 +23,17 @@ import { DEFAULT_GRID_TYPE, GRID_TYPES, gridTypeFor } from '../lib/gridTypes';
 export default function Dialogs({
   which,
   onClose,
-  resetToken,
   onSwitch,
 }: {
   which: DialogId;
   onClose: () => void;
-  resetToken?: string | null;
   /** Replace this dialog with another (Account → Settings). */
   onSwitch?: (d: DialogId) => void;
 }) {
   if (which === 'account')
-    return (
-      <AccountDialog
-        onClose={onClose}
-        resetToken={resetToken ?? null}
-        onSettings={onSwitch && (() => onSwitch('settings'))}
-      />
-    );
+    return <AccountDialog onClose={onClose} onSettings={onSwitch && (() => onSwitch('settings'))} />;
   if (which === 'settings') return <SettingsDialog onClose={onClose} />;
+  if (which === 'share') return <ShareCurrent onClose={onClose} />;
   if (which === 'new') return <NewDialog onClose={onClose} />;
   if (which === 'resize') return <ResizeDialog onClose={onClose} />;
   if (which === 'saveas') return <SaveAsDialog onClose={onClose} />;
@@ -253,6 +246,61 @@ function useSharedWithMe(enabled: boolean): VirtualLocation | undefined {
   }, [enabled, items]);
 }
 
+/**
+ * Share the design that's open. Sharing works on the account's copy, so it
+ * has to be saved in Cloud Storage first: this offers the one step that gets
+ * it there (save it, move it from Local Storage, or save the latest changes),
+ * then opens the usual Share dialog.
+ */
+function ShareCurrent({ onClose }: { onClose: () => void }) {
+  const slotPath = useStore((st) => st.slotPath);
+  const dirty = useStore((st) => st.dirty);
+  const name = useStore((st) => st.design.meta.name) || 'Untitled Pattern';
+  const [error, setError] = useState<string | null>(null);
+  const ready = inCloudStorage(slotPath) && !dirty;
+  if (ready && slotPath)
+    return <ShareDialog path={cloudInnerPath(slotPath)} name={storage.splitDesignPath(slotPath).name} onClose={onClose} />;
+
+  const step = !slotPath
+    ? { why: 'It isn’t saved yet.', action: 'Save to Cloud Storage' }
+    : !inCloudStorage(slotPath)
+      ? { why: 'It’s in Local Storage, on this device only.', action: 'Move to Cloud Storage' }
+      : { why: 'It has changes that aren’t saved.', action: 'Save changes' };
+  const go = () => {
+    const st = useStore.getState();
+    try {
+      // never over another design of the same name
+      if (!st.slotPath) st.saveToSlot(designLibrary.uniqueName(CLOUD_STORAGE, name), CLOUD_STORAGE);
+      else if (!inCloudStorage(st.slotPath)) {
+        st.remapSlot(designLibrary.move([{ kind: 'file', path: st.slotPath }], CLOUD_STORAGE));
+        if (useStore.getState().dirty) useStore.getState().quickSave();
+      } else st.quickSave();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <Modal title={`Share “${name}”`} onClose={onClose}>
+      <p>
+        {step.why} Sharing uses the copy in your Cloud Storage, so that friends and the gallery see what you save.
+      </p>
+      {error && (
+        <p className="acct-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="actions">
+        <button className="btn" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="btn primary" onClick={go}>
+          {step.action} and share
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Like, rate and comment on a design a friend shared. */
 function RateDialog({ id, name, onClose }: { id: string; name: string; onClose: () => void }) {
   const [r, setR] = useState<Reactions | undefined | null>(null); // null: loading
@@ -284,6 +332,7 @@ function RateDialog({ id, name, onClose }: { id: string; name: string; onClose: 
 /** The Finder-style browser over saved designs, for Open and Save As. */
 function DesignBrowser({ mode, onClose }: { mode: 'open' | 'save'; onClose: () => void }) {
   const s = useStore();
+  useEffect(syncOnLook, []);
   const user = useStore((st) => st.cloudUser);
   const [sharing, setSharing] = useState<{ path: string; name: string } | null>(null);
   const [rating, setRating] = useState<{ id: string; name: string } | null>(null);

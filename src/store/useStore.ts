@@ -1,4 +1,4 @@
-import type { CloudUser } from '../lib/cloud/backend';
+import type { CloudUser, Standing } from '../lib/cloud/backend';
 import type { SyncInfo } from '../lib/cloud/sync';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
@@ -301,11 +301,15 @@ export interface StoreState {
   cloudAvailable: boolean;
   cloudUser: CloudUser | null;
   cloudUsername: string | null; // from the profile, once picked
+  cloudReady: boolean; // the stored session has been checked: cloudUser is settled
+  cloudStanding: Standing; // my staff role, and whether I'm suspended
   cloudInfo: SyncInfo;
   libraryNonce: number; // bumped when a sync changes saved designs / palettes
   setCloudAvailable: (v: boolean) => void;
   setCloudUser: (u: CloudUser | null) => void;
   setCloudUsername: (name: string | null) => void;
+  setCloudReady: () => void;
+  setCloudStanding: (standing: Standing) => void;
   setCloudInfo: (i: SyncInfo) => void;
   bumpLibrary: () => void;
   /** ⌘V: drop a copied object straight away, or enter paste mode for cells. */
@@ -969,11 +973,20 @@ export const useStore = create<StoreState>()(
     cloudAvailable: false,
     cloudUser: null,
     cloudUsername: null,
+    cloudReady: false,
+    cloudStanding: { role: 'user', suspendedReason: null },
     cloudInfo: { status: 'off', pending: 0 },
     libraryNonce: 0,
     setCloudAvailable: (v) => set({ cloudAvailable: v }),
-    setCloudUser: (u) => set(u ? { cloudUser: u } : { cloudUser: null, cloudUsername: null }),
+    setCloudUser: (u) =>
+      set(
+        u
+          ? { cloudUser: u }
+          : { cloudUser: null, cloudUsername: null, cloudStanding: { role: 'user', suspendedReason: null } },
+      ),
     setCloudUsername: (n) => set({ cloudUsername: n }),
+    setCloudReady: () => set({ cloudReady: true }),
+    setCloudStanding: (st) => set({ cloudStanding: st }),
     setCloudInfo: (i) => set({ cloudInfo: i }),
     bumpLibrary: () => set((s) => ({ libraryNonce: s.libraryNonce + 1 })),
 

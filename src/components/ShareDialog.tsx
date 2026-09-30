@@ -12,6 +12,7 @@ import Comments, { ShareLinkButton } from './Comments';
 
 type Loaded = {
   id: string;
+  hiddenReason?: string | null;
   published: boolean;
   friendIds: Set<string>;
   friends: Friend[];
@@ -43,6 +44,7 @@ export default function ShareDialog({ path, name, onClose }: { path: string; nam
       if (!live) return;
       setState({
         id,
+        hiddenReason: sharing.hiddenReason,
         published: sharing.published,
         friendIds: new Set(sharing.friendIds),
         friends,
@@ -88,6 +90,11 @@ export default function ShareDialog({ path, name, onClose }: { path: string; nam
         )
       ) : (
         <div className="share">
+          {state.hiddenReason && (
+            <p className="home-callout suspended">
+              A moderator hid this design from everyone but you. Reason: {state.hiddenReason}
+            </p>
+          )}
           <ReactionBar itemId={state.id} initial={state.reactions} canReact />
           <label className="check share-opt">
             <input type="checkbox" checked={published} onChange={(e) => setPublished(e.target.checked)} />

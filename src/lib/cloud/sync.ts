@@ -468,7 +468,12 @@ export function createSyncEngine(
       saveOutbox();
     }
     await flush();
-    return outbox.items[id] === undefined && status === 'synced' ? id : null;
+    // a sync already under way (opening a browser starts one) may run again
+    // after the one we joined: wait until none is running
+    while (flushing) await flushing;
+    if (outbox.items[id] !== undefined) await flush();
+    // sent means off the outbox (a failed push leaves it there)
+    return outbox.items[id] === undefined ? id : null;
   }
 
   function setUser(u: CloudUser | null) {

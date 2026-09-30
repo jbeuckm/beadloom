@@ -43,11 +43,11 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
           <label key={v} className="check">
             <input type="radio" name="launch-to" checked={launchTo === v} onChange={() => setLaunch(v)} />
             <span>
-              {v === 'home' ? 'Show my home' : 'Go straight back to my last design'}
+              {v === 'home' ? 'Show my start page' : 'Go straight back to my last design'}
               <span className="hint">
                 {v === 'home'
-                  ? ' — your designs, activity, friends and journal; the design you were on is one tap away'
-                  : ' — the Home button, top left, is always there'}
+                  ? ' — your home when signed in (designs, activity, friends, journal), the welcome otherwise'
+                  : ' — the mark, top left, always takes you to the start page'}
               </span>
             </span>
           </label>

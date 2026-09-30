@@ -26,7 +26,10 @@ function init(): Cloud {
   let backend: (CloudBackend & { fake?: unknown }) | null = null;
   if (fake) backend = createFakeBackend();
   else if (authUrl && dataUrl) backend = createNeonBackend(authUrl, dataUrl);
-  if (!backend) return { available: false, backend: null, engine: null, activity: null };
+  if (!backend) {
+    useStore.getState().setCloudReady();
+    return { available: false, backend: null, engine: null, activity: null };
+  }
 
   const store = () => useStore.getState();
   const engine = createSyncEngine(
@@ -54,6 +57,7 @@ function init(): Cloud {
       if (inCloudStorage(s.paletteSlotPath)) useStore.setState({ paletteSlotPath: null });
     }
     lastUserId = u?.id ?? null;
+    store().setCloudReady();
     setCloudStoreOpen(!!u); // Cloud Storage shows in the browsers only while signed in
     store().setCloudUser(u);
     engine.setUser(u);
@@ -64,6 +68,7 @@ function init(): Cloud {
         .myProfile()
         .then((p) => store().cloudUser?.id === u.id && store().setCloudUsername(p?.username ?? null))
         .catch(() => {});
+    if (u) setTimeout(refreshStanding); // after init: `cloud` isn't assigned yet if this runs during it
   };
   backend.onUserChange(apply);
   backend
@@ -80,8 +85,8 @@ function init(): Cloud {
 export const cloud: Cloud = init();
 
 /** The URL a password-reset email should send the user back to: the
- *  designer, where the Account dialog opens with the new-password form. */
-export const resetRedirectUrl = () => `${location.origin}${location.pathname}#/design?auth=reset`;
+ *  sign-in page, which then asks for the new password. */
+export const resetRedirectUrl = () => `${location.origin}${location.pathname}#/signin?auth=reset`;
 
 /** A reset token in the page URL (`#auth=reset?token=…` or `?auth=reset&token=…`), if any. */
 export function resetTokenFromUrl(): string | null {
@@ -98,5 +103,22 @@ export function resetTokenFromUrl(): string | null {
 
 /** Drop the reset token from the address bar once it's been used. */
 export function clearAuthUrl() {
-  history.replaceState(null, '', `${location.pathname}#/design`);
+  history.replaceState(null, '', `${location.pathname}#/signin`);
+}
+
+/** Bring Cloud Storage up to date now: when the user is about to look at
+ *  their designs (Open, the Palette Library, Home), so what they changed on
+ *  another device is there. Does nothing signed out. */
+export function syncOnLook() {
+  void cloud.engine?.flush();
+}
+
+/** Reload my role and suspension (at sign-in; after staff change them). */
+export function refreshStanding() {
+  const b = cloud.backend;
+  const id = useStore.getState().cloudUser?.id;
+  if (!b || !id) return;
+  b.standing()
+    .then((st) => useStore.getState().cloudUser?.id === id && useStore.getState().setCloudStanding(st))
+    .catch(() => {});
 }

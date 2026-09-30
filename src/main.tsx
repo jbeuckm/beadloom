@@ -39,7 +39,7 @@ if (import.meta.env.DEV) {
     history.replaceState(null, '', `${location.pathname}#/${old.design ? 'gallery/' + old.design : 'journal/' + old.post}`);
   // a password-reset email sent before routing: #auth=reset?token=…
   else if (location.hash.startsWith('#auth='))
-    history.replaceState(null, '', `${location.pathname}#/design?${location.hash.slice(1).replace('?', '&')}`);
+    history.replaceState(null, '', `${location.pathname}#/signin?${location.hash.slice(1).replace('?', '&')}`);
   // a bare address is the home route
   else if (!location.hash) history.replaceState(null, '', `${location.pathname}${location.search}#/`);
 }

@@ -1,14 +1,16 @@
-// The home page, when accounts are available: how to use the app (on this
-// device only, or with an account) with what each means, and the public
-// gallery of published designs. Shown at launch until a way is chosen, and
-// from the Home button after that.
+// The pages around the designer, when accounts are available: the welcome
+// (how to use Chromattice), signing in, the user's own home, the Gallery and
+// the Journal. The site map is below; App routes to them.
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { useStore } from '../store/useStore';
 import Modal from './Modal';
 import Avatar from './Avatar';
 import { Icon } from './icons';
-import { cloud } from '../lib/cloud';
+import { cloud, refreshStanding, resetTokenFromUrl } from '../lib/cloud';
+import AuthForm, { AUTH_TITLES, type AuthMode } from './AuthForm';
+import type { DialogId } from './TopBar';
 import type { GalleryItem, Reactions } from '../lib/cloud/backend';
 import { ReactionBar, ReactionSummary } from './Reactions';
 import Comments, { ShareLinkButton } from './Comments';
@@ -16,10 +18,12 @@ import { Journal } from './Posts';
 import { describeDesign, designThumbnail } from '../lib/library';
 import { Logo, Zigzag, pixelScene } from './Brand';
 import PersonalHome from './PersonalHome';
+import { AdminPanel, ReportButton } from './Moderation';
 
 export const HOME_MODE_KEY = 'beadloom.homeMode';
 export type HomeMode = 'local' | 'account';
 
+/** How the user said they'd use the app (the welcome's choice), if they have. */
 export function readHomeMode(): HomeMode | null {
   try {
     const v = localStorage.getItem(HOME_MODE_KEY);
@@ -36,12 +40,7 @@ const writeHomeMode = (m: HomeMode) => {
   }
 };
 
-/** Shown at launch: accounts exist and no way of working has been picked yet. */
-export const homeAtLaunch = () => cloud.available && !readHomeMode();
-
-export type HomePage = 'home' | 'gallery' | 'journal';
-
-// Where the app opens: Home (default), or straight back into the last design.
+// Where the app opens: the start page (default), or straight back into the last design.
 const LAUNCH_KEY = 'beadloom.launchTo';
 export type LaunchTo = 'home' | 'design';
 export function readLaunchTo(): LaunchTo {
@@ -59,38 +58,96 @@ export function writeLaunchTo(v: LaunchTo) {
   }
 }
 
-export interface HomeActions {
-  onClose: () => void; // back to the designer
-  onSignIn: () => void; // the Account dialog
-  onGo: (page: HomePage) => void;
-  /** A design (gallery) or post (journal) by its cloud id. */
-  onOpenItem: (kind: 'design' | 'post', id: string) => void;
-  onNewDesign: () => void;
-  onOpenFiles: () => void;
+/**
+ * The start page for this user: their Home when signed in, else the welcome
+ * (unless they've asked to go straight back to their design).
+ */
+export function startPath(signedIn: boolean): string {
+  if (!cloud.available) return '/design';
+  if (readLaunchTo() === 'design' && (signedIn || readHomeMode() === 'local')) return '/design';
+  return signedIn ? '/home' : '/welcome';
 }
 
-/**
- * Home. The first time (or signed out, having chosen nothing), a welcome:
- * how to use Chromattice. After that, the user's own home: the design they
- * were on, their designs, activity, friends, journal (PersonalHome).
- */
-export default function Home(actions: HomeActions) {
-  const { onGo } = actions;
+// ---- the site map ---------------------------------------------------------------
+//
+//   #/            → the start page (above)
+//   #/welcome     → new or signed-out visitors: this device, or an account
+//   #/signin      → sign in / create account / reset password
+//   #/home        → the user's own home: their designs, activity, friends, journal
+//   #/gallery(/id), #/journal(/id)
+//   #/design      → the designer (every page sits over it)
+
+/** What pages can ask of the app around them: its dialogs. */
+export const PagesContext = createContext<{ openDialog: (d: DialogId) => void }>({ openDialog: () => {} });
+
+export type SitePageId = 'home' | 'gallery' | 'journal' | 'signin' | 'admin';
+
+/** A full-screen page with the site's header: the mark and name (Home),
+ *  Home / Gallery / Journal, the account, and the way back to the designer. */
+function SitePage({ page, title, children }: { page: SitePageId; title: string; children: ReactNode }) {
+  const navigate = useNavigate();
   const user = useStore((s) => s.cloudUser);
-  const [mode, setMode] = useState<HomeMode | null>(() => readHomeMode());
-  const current: HomeMode | null = user ? 'account' : mode === 'account' ? null : mode;
-  const welcome = !current;
-
-  // signing in from here settles it: this is an account user
-  useEffect(() => {
-    if (user) {
-      writeHomeMode('account');
-      setMode('account');
-    }
-  }, [user]);
-
+  const username = useStore((s) => s.cloudUsername);
+  const { openDialog } = useContext(PagesContext);
+  const staff = useStore((s) => s.cloudStanding.role !== 'user');
+  const tabs: Array<[SitePageId, string]> = [
+    ['home', 'Home'],
+    ['gallery', 'Gallery'],
+    ['journal', 'Journal'],
+    ...(staff ? [['admin', 'Admin'] as [SitePageId, string]] : []),
+  ];
   return (
-    <div className="home" role="region" aria-label="Home">
+    <div className="home full-page" role="region" aria-label={title}>
+      <header className="page-bar" style={pixelScene(200, 10, { sun: false, mesas: true })}>
+        <button className="page-brand" onClick={() => navigate('/')} aria-label="Start page">
+          <Logo size={44} />
+          <span>Chromattice</span>
+        </button>
+        <nav className="page-tabs" aria-label="Pages">
+          {tabs.map(([p, label]) => (
+            <button
+              key={p}
+              className={p === page ? 'on' : ''}
+              aria-current={p === page ? 'page' : undefined}
+              onClick={() => navigate(`/${p}`)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+        <span className="grow" />
+        {user ? (
+          <button
+            className="page-account"
+            onClick={() => openDialog('account')}
+            aria-label={`Signed in as ${username ? '@' + username : user.email}`}
+          >
+            <Icon name="user" size={16} /> {username ? '@' + username : user.name || user.email}
+          </button>
+        ) : (
+          page !== 'signin' && (
+            <button className="page-account" onClick={() => navigate(`/signin?next=/${page}`)}>
+              <Icon name="user" size={16} /> Sign in
+            </button>
+          )
+        )}
+        <button className="btn primary" onClick={() => navigate('/design')}>
+          Designer <Icon name="chevron-right" size={16} />
+        </button>
+      </header>
+      <Zigzag />
+      <div className="home-inner">{children}</div>
+    </div>
+  );
+}
+
+// ---- welcome ------------------------------------------------------------------
+
+/** New or signed-out visitors: the brand, and how to use Chromattice. */
+export function WelcomePage() {
+  const navigate = useNavigate();
+  return (
+    <div className="home" role="region" aria-label="Welcome">
       <header className="home-hero" style={pixelScene(160, 36, { sun: true, mesas: true })}>
         <div className="home-hero-inner">
           <Logo size={176} />
@@ -105,31 +162,35 @@ export default function Home(actions: HomeActions) {
       </header>
       <Zigzag />
       <div className="home-inner">
-        {welcome ? (
-          <ModeCards current={current} setMode={setMode} {...actions} />
-        ) : (
-          <PersonalHome {...actions} />
-        )}
-        <Explore onGo={onGo} />
-        {!welcome && (
-          <section className="home-section" aria-label="How you use Chromattice">
-            <h2>How you use Chromattice</h2>
-            <ModeCards current={current} setMode={setMode} {...actions} />
-          </section>
-        )}
+        <ModeCards />
+        <nav className="home-explore" aria-label="Explore">
+          <button className="explore-card" onClick={() => navigate('/gallery')}>
+            <Icon name="grid" size={28} />
+            <span>
+              <b>Gallery</b>
+              <span className="hint">Designs people have published, to like, rate and open a copy of.</span>
+            </span>
+            <Icon name="chevron-right" size={20} />
+          </button>
+          <button className="explore-card" onClick={() => navigate('/journal')}>
+            <Icon name="pencil" size={28} />
+            <span>
+              <b>Journal</b>
+              <span className="hint">Posts about designs: how they were made, and what they're for.</span>
+            </span>
+            <Icon name="chevron-right" size={20} />
+          </button>
+        </nav>
       </div>
     </div>
   );
 }
 
 /** On this device only, or with an account: what each means, and the choice. */
-function ModeCards({
-  current,
-  setMode,
-  onClose,
-  onSignIn,
-}: HomeActions & { current: HomeMode | null; setMode: (m: HomeMode) => void }) {
+function ModeCards() {
+  const navigate = useNavigate();
   const user = useStore((s) => s.cloudUser);
+  const mode = user ? 'account' : readHomeMode();
   const useLocal = async () => {
     if (user) {
       if (!confirm('Sign out and work on this device only? Designs already on this device stay here; they stop syncing.'))
@@ -137,12 +198,11 @@ function ModeCards({
       await cloud.backend?.signOut();
     }
     writeHomeMode('local');
-    setMode('local');
-    onClose();
+    navigate('/home');
   };
   return (
     <section className="home-modes" aria-label="How to use Chromattice">
-      <article className={'home-mode' + (current === 'local' ? ' current' : '')}>
+      <article className={'home-mode' + (mode === 'local' ? ' current' : '')}>
         <h2>
           <Icon name="cloud-off" size={20} /> On this device only
         </h2>
@@ -152,11 +212,11 @@ function ModeCards({
           <li>No sharing.</li>
         </ul>
         <button className="btn" onClick={() => void useLocal()}>
-          {current === 'local' ? 'Keep using this device' : user ? 'Sign out and use this device only' : 'Use on this device'}
+          {mode === 'local' ? 'Continue on this device' : user ? 'Sign out and use this device only' : 'Use on this device'}
         </button>
       </article>
 
-      <article className={'home-mode' + (current === 'account' ? ' current' : '')}>
+      <article className={'home-mode' + (mode === 'account' ? ' current' : '')}>
         <h2>
           <Icon name="cloud" size={20} /> With an account
         </h2>
@@ -166,11 +226,11 @@ function ModeCards({
           <li>Local Storage is still there for private work.</li>
         </ul>
         {user ? (
-          <button className="btn primary" onClick={onClose}>
-            Continue as {user.name || user.email}
+          <button className="btn primary" onClick={() => navigate('/home')}>
+            Go to your home
           </button>
         ) : (
-          <button className="btn primary" onClick={onSignIn}>
+          <button className="btn primary" onClick={() => navigate('/signin?next=/home')}>
             Sign in or create an account
           </button>
         )}
@@ -179,107 +239,134 @@ function ModeCards({
   );
 }
 
-function Explore({ onGo }: { onGo: (page: HomePage) => void }) {
+// ---- sign in ------------------------------------------------------------------
+
+/** Sign in, create an account, or reset a password; then on to `next`. */
+export function SignInPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const user = useStore((s) => s.cloudUser);
+  const params = new URLSearchParams(location.search);
+  const next = params.get('next') || '/home';
+  const [resetToken] = useState(() => resetTokenFromUrl());
+  const [mode, setMode] = useState<AuthMode>(resetToken ? 'reset' : params.get('mode') === 'signup' ? 'signup' : 'signin');
+
+  // signed in: on to wherever they were going (a reset lands back on sign in)
+  useEffect(() => {
+    if (user && mode !== 'reset') {
+      writeHomeMode('account');
+      navigate(next, { replace: true });
+    }
+  }, [user, mode, next, navigate]);
+
   return (
-    <nav className="home-explore" aria-label="Explore">
-      <button className="explore-card" onClick={() => onGo('gallery')}>
-        <Icon name="grid" size={28} />
-        <span>
-          <b>Gallery</b>
-          <span className="hint">Designs people have published, to like, rate and open a copy of.</span>
-        </span>
-        <Icon name="chevron-right" size={20} />
-      </button>
-      <button className="explore-card" onClick={() => onGo('journal')}>
-        <Icon name="pencil" size={28} />
-        <span>
-          <b>Journal</b>
-          <span className="hint">Posts about designs: how they were made, and what they're for.</span>
-        </span>
-        <Icon name="chevron-right" size={20} />
-      </button>
-    </nav>
+    <SitePage page="signin" title={AUTH_TITLES[mode]}>
+      <div className="signin-card">
+        <h2>{AUTH_TITLES[mode]}</h2>
+        <AuthForm initialMode={mode} resetToken={resetToken} onModeChange={setMode} />
+      </div>
+    </SitePage>
   );
 }
 
-/** A full-screen page off Home (the Gallery, the Journal): a slim branded
- *  header to move between them, and the page itself. */
-function FullPage({
-  page,
-  title,
-  onGo,
-  onClose,
-  children,
-}: {
-  page: HomePage;
-  title: string;
-  onGo: (page: HomePage) => void;
-  onClose: () => void;
-  children: ReactNode;
-}) {
+// ---- the user's own home --------------------------------------------------------
+
+export function HomePage() {
+  const navigate = useNavigate();
+  useEffect(refreshStanding, []);
+  const user = useStore((s) => s.cloudUser);
+  const username = useStore((s) => s.cloudUsername);
+  const { openDialog } = useContext(PagesContext);
+  const actions: HomeActions = {
+    onClose: () => navigate('/design'),
+    onSignIn: () => (user ? openDialog('account') : navigate('/signin?next=/home')),
+    onGo: (p) => navigate(`/${p}`),
+    onOpenItem: (kind, id) => navigate(kind === 'design' ? `/gallery/${id}` : `/journal/${id}`),
+    onNewDesign: () => {
+      if (useStore.getState().dirty && !confirm('Discard unsaved changes and start a new design?')) return;
+      navigate('/design');
+      openDialog('new');
+    },
+    onOpenFiles: () => {
+      navigate('/design');
+      openDialog('open');
+    },
+  };
   return (
-    <div className="home full-page" role="region" aria-label={title}>
-      <header className="page-bar" style={pixelScene(200, 10, { sun: false, mesas: true })}>
-        <button className="page-brand" onClick={() => onGo('home')} aria-label="Home">
-          <Logo size={44} />
-          <span>Chromattice</span>
-        </button>
-        <nav className="page-tabs" aria-label="Pages">
-          {(['gallery', 'journal'] as const).map((p) => (
-            <button key={p} className={p === page ? 'on' : ''} aria-current={p === page ? 'page' : undefined} onClick={() => onGo(p)}>
-              {p === 'gallery' ? 'Gallery' : 'Journal'}
-            </button>
-          ))}
-        </nav>
-        <span className="grow" />
-        <button className="btn primary" onClick={onClose}>
-          Back to designing <Icon name="chevron-right" size={16} />
-        </button>
-      </header>
-      <Zigzag />
-      <div className="home-inner">{children}</div>
-    </div>
+    <SitePage page="home" title="Home">
+      <h1 className="page-title">{user ? `Welcome back${username ? ', @' + username : ''}` : 'Your designs'}</h1>
+      <SuspendedNotice />
+      {!user && cloud.available && (
+        <p className="home-callout">
+          You're working on this device only.
+          <button className="btn mini" onClick={() => navigate('/signin?next=/home')}>
+            Sign in to sync and share
+          </button>
+        </p>
+      )}
+      <PersonalHome {...actions} />
+    </SitePage>
   );
 }
 
-export function GalleryPage({
-  openId,
-  onOpen,
-  onGo,
-  onClose,
-}: {
-  /** The design showing, from the route. */
-  openId: string | null;
-  onOpen: (id: string | null) => void;
-  onGo: (page: HomePage) => void;
-  onClose: () => void;
-}) {
+export interface HomeActions {
+  onClose: () => void; // back to the designer
+  onSignIn: () => void; // the account (or signing in)
+  onGo: (page: 'gallery' | 'journal') => void;
+  /** A design (gallery) or post (journal) by its cloud id. */
+  onOpenItem: (kind: 'design' | 'post', id: string) => void;
+  onNewDesign: () => void;
+  onOpenFiles: () => void;
+}
+
+/** Staff only: reports, the gallery and journal, people, the log. */
+export function AdminPage() {
+  return (
+    <SitePage page="admin" title="Admin">
+      <AdminPanel />
+    </SitePage>
+  );
+}
+
+/** Suspended: what that means, and why. */
+export function SuspendedNotice() {
+  const reason = useStore((s) => s.cloudStanding.suspendedReason);
+  if (!reason) return null;
+  return (
+    <p className="home-callout suspended" role="status">
+      <b>Your account is suspended.</b> Reason: {reason}. You can still sign in and use your own designs,
+      but not publish, share, post, comment or react until a moderator lifts it.
+    </p>
+  );
+}
+
+// ---- gallery and journal ----------------------------------------------------------
+
+export function GalleryPage({ openId }: { openId: string | null }) {
+  const navigate = useNavigate();
   const user = useStore((s) => s.cloudUser);
   return (
-    <FullPage page="gallery" title="Gallery" onGo={onGo} onClose={onClose}>
-      <Gallery signedIn={!!user} onOpened={onClose} openId={openId} onOpen={onOpen} />
-    </FullPage>
+    <SitePage page="gallery" title="Gallery">
+      <Gallery
+        signedIn={!!user}
+        onOpened={() => navigate('/design')}
+        openId={openId}
+        onOpen={(id) => navigate(id ? `/gallery/${id}` : '/gallery')}
+      />
+    </SitePage>
   );
 }
 
-export function JournalPage({
-  openId,
-  onOpen,
-  onGo,
-  onClose,
-  onOpenDesign,
-}: {
-  /** The post showing, from the route. */
-  openId: string | null;
-  onOpen: (id: string | null) => void;
-  onGo: (page: HomePage) => void;
-  onClose: () => void;
-  onOpenDesign: (id: string) => void;
-}) {
+export function JournalPage({ openId }: { openId: string | null }) {
+  const navigate = useNavigate();
   return (
-    <FullPage page="journal" title="Journal" onGo={onGo} onClose={onClose}>
-      <Journal openId={openId} onOpen={onOpen} onOpenDesign={onOpenDesign} />
-    </FullPage>
+    <SitePage page="journal" title="Journal">
+      <Journal
+        openId={openId}
+        onOpen={(id) => navigate(id ? `/journal/${id}` : '/journal')}
+        onOpenDesign={(id) => navigate(`/gallery/${id}`)}
+      />
+    </SitePage>
   );
 }
 
@@ -471,6 +558,7 @@ function GalleryPreview({
       />
       <div className="actions">
         <ShareLinkButton id={item.id} name={name} />
+        <ReportButton kind="design" targetId={item.id} ownerId={item.owner?.id} />
         <span className="grow" />
         <button className="btn" onClick={onClose}>
           Close

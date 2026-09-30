@@ -8,6 +8,7 @@ import Avatar from './Avatar';
 import Markup from './Markup';
 import { Icon } from './icons';
 import { ShareLinkButton } from './Comments';
+import { ReportButton } from './Moderation';
 import { cloud } from '../lib/cloud';
 import type { GalleryItem, Post, PostVisibility } from '../lib/cloud/backend';
 import { cloudDesigns, designThumbnail, isInTrash } from '../lib/library';
@@ -248,6 +249,11 @@ function PostView({
         {when(post.publishedAt ?? post.updatedAt)}
         {mine && ` · ${VISIBILITY.find((v) => v.v === post.visibility)!.label}`}
       </p>
+      {mine && post.hiddenReason && (
+        <p className="home-callout suspended">
+          A moderator hid this post from everyone else. Reason: {post.hiddenReason}
+        </p>
+      )}
       <Markup text={post.body} />
       {post.designIds.length > 0 && (
         <ul className="post-designs">
@@ -268,6 +274,7 @@ function PostView({
       )}
       <div className="actions">
         {post.visibility !== 'draft' && <ShareLinkButton id={post.id} name={post.title} kind="post" />}
+        <ReportButton kind="post" targetId={post.id} ownerId={post.authorId} />
         <span className="grow" />
         {mine && (
           <>

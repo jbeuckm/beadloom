@@ -73,6 +73,63 @@ export interface SharedItem {
 export interface ItemSharing {
   published: boolean;
   friendIds: string[];
+  /** Set when a moderator hid it from everyone but me. */
+  hiddenReason?: string | null;
+}
+
+// ---- staff: roles, reports, moderation ----
+export type StaffRole = 'user' | 'moderator' | 'admin';
+export interface Standing {
+  role: StaffRole;
+  /** Set while suspended: signed in, but no publishing, sharing, posting… */
+  suspendedReason: string | null;
+}
+export type ReportKind = 'design' | 'post' | 'comment';
+/** A reported thing and its open reports. */
+export interface QueueItem {
+  kind: ReportKind;
+  targetId: string;
+  reports: number;
+  reasons: string[];
+  firstAt: string;
+  title: string;
+  ownerId: string | null;
+  ownerName: string | null;
+  doc: unknown | null; // designs
+  body: string | null; // posts and comments
+  hidden: boolean;
+}
+/** A published (or hidden) design or post, as staff review it. */
+export interface StaffContent {
+  id: string;
+  title: string;
+  ownerId: string;
+  ownerName: string | null;
+  doc: unknown | null;
+  body: string | null;
+  at: string | null;
+  hidden: boolean;
+  hiddenReason: string | null;
+}
+export interface StaffUser {
+  id: string;
+  email: string;
+  name: string;
+  username: string | null;
+  role: StaffRole;
+  banned: boolean;
+  suspendedReason: string | null;
+  createdAt: string;
+  designs: number;
+  published: number;
+}
+export interface LogEntry {
+  at: string;
+  actor: string;
+  action: string;
+  targetKind: string;
+  targetId: string;
+  reason: string | null;
 }
 
 /** Likes and star ratings on a design: totals, and mine when signed in. */
@@ -108,6 +165,8 @@ export interface Post {
   createdAt: string;
   updatedAt: string;
   publishedAt: string | null;
+  /** Set when a moderator hid it (only its author still sees it). */
+  hiddenReason?: string | null;
 }
 export interface PostDraft {
   id?: string; // absent: a new post
@@ -202,4 +261,23 @@ export interface CloudBackend {
   /** Create or update one of my posts; its id. */
   savePost(draft: PostDraft): Promise<AuthResult & { id?: string }>;
   deletePost(postId: string): Promise<void>;
+
+  // ---- standing, reports, moderation ----
+  /** My role, and whether I'm suspended. */
+  standing(): Promise<Standing>;
+  /** Report a design, post or comment to the moderators. */
+  report(kind: ReportKind, targetId: string, reason: string): Promise<AuthResult>;
+  // staff only (the database refuses anyone else)
+  staffQueue(): Promise<QueueItem[]>;
+  staffContent(what: 'design' | 'post'): Promise<StaffContent[]>;
+  staffSetHidden(what: 'design' | 'post', id: string, hide: boolean, reason: string | null): Promise<void>;
+  staffDeleteComment(id: string, reason: string): Promise<void>;
+  staffDismiss(kind: ReportKind, id: string, reason: string | null): Promise<void>;
+  staffUsers(query: string): Promise<StaffUser[]>;
+  staffSuspend(userId: string, reason: string): Promise<void>;
+  staffUnsuspend(userId: string): Promise<void>;
+  adminSetRole(userId: string, role: StaffRole): Promise<void>;
+  adminBan(userId: string, reason: string): Promise<void>;
+  adminUnban(userId: string): Promise<void>;
+  staffLog(limit: number): Promise<LogEntry[]>;
 }

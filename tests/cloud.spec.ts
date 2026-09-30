@@ -21,15 +21,23 @@ const setOffline = (page: Page, v: boolean) =>
   page.evaluate((x) => (window as any).__beadloomCloudFake.setOffline(x), v);
 const cloudState = async (page: Page) => (await snapshot(page)).cloud;
 
-async function signUp(page: Page, email: string, password: string) {
+/** Create an account on the sign-in page (from the designer's Account button,
+ *  which comes back to the designer), then open the Account dialog. */
+async function createAccount(page: Page, email: string, password: string) {
   await page.getByRole('button', { name: 'Account' }).click();
-  const m = page.locator('.modal');
-  await m.getByRole('button', { name: 'Create account' }).click();
-  await m.locator('input[type="text"]').fill('Tester');
-  await m.locator('input[type="email"]').fill(email);
-  await m.locator('input[type="password"]').fill(password);
-  await m.getByRole('button', { name: 'Create account' }).click();
-  await expect(m).toContainText(email);
+  await expect(page).toHaveURL(/#\/signin\?next=/);
+  const card = page.locator('.signin-card');
+  await card.getByRole('button', { name: 'Create account' }).click();
+  await card.locator('input[type="text"]').fill('Tester');
+  await card.locator('input[type="email"]').fill(email);
+  await card.locator('.pw-field input').fill(password);
+  await card.getByRole('button', { name: 'Create account' }).click();
+  await expect(page).toHaveURL(/#\/design$/); // back where they were
+  await page.getByRole('button', { name: 'Account' }).click();
+}
+async function signUp(page: Page, email: string, password: string) {
+  await createAccount(page, email, password);
+  await expect(page.locator('.modal')).toContainText(email);
   await expect.poll(async () => (await cloudState(page)).status).toBe('synced');
 }
 
@@ -120,11 +128,15 @@ test('sign up, save to Cloud Storage, rename: every change reaches the cloud; an
     [row, later] as const,
   );
   await modal.getByRole('button', { name: 'Cancel' }).click();
-  await page.getByRole('button', { name: 'Account' }).click();
-  await page.locator('.modal').getByRole('button', { name: 'Sync now' }).click();
+  // opening Open brings Cloud Storage up to date: no button to press
+  await openFileMenu(page, /⊟ Open/);
   await expect.poll(() =>
     page.evaluate(() => JSON.parse(JSON.parse(localStorage['beadloom.cloud.designs'])['Cloud Two']).meta.name),
   ).toBe('Cloud Two (edited elsewhere)');
+  await modal.getByRole('button', { name: 'Cancel' }).click();
+  // and with nothing wrong, the Account dialog offers no manual sync
+  await page.getByRole('button', { name: 'Account' }).click();
+  await expect(page.locator('.modal').getByRole('button', { name: 'Try again' })).toHaveCount(0);
 });
 
 test('offline: saves queue, the status says so, and they sync when back', async ({ page }) => {
@@ -154,11 +166,12 @@ test('offline: saves queue, the status says so, and they sync when back', async 
   expect(await page.evaluate(() => 'Offline One' in JSON.parse(localStorage['beadloom.cloud.designs']))).toBe(true); // but it's saved on the device
 
   await setOffline(page, false);
-  await page.getByRole('button', { name: 'Account' }).click();
-  await page.locator('.modal').getByRole('button', { name: 'Sync now' }).click();
+  await page.getByRole('button', { name: 'Account' }).click(); // stuck: a way to push now
+  await page.locator('.modal').getByRole('button', { name: 'Try again' }).click();
   await expect.poll(async () => (await cloudState(page)).status).toBe('synced');
   expect((await cloudDump(page)).items.map((i) => i.path)).toEqual(['Offline One']);
   await expect(page.locator('.modal')).toContainText('Cloud Storage is up to date');
+  await expect(page.locator('.modal').getByRole('button', { name: 'Try again' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Account' }).locator('.account-pending')).toHaveCount(0);
 });
 
@@ -211,31 +224,33 @@ test('forgot password: the emailed link opens the reset form; the new password w
   await page.locator('.modal').getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('button', { name: 'Account' })).toHaveText(/Sign in/);
 
-  await page.getByRole('button', { name: 'Account' }).click();
-  const m = page.locator('.modal');
-  await m.getByRole('button', { name: 'Forgot password?' }).click();
-  await m.locator('input[type="email"]').fill('dee@example.com');
-  await m.getByRole('button', { name: 'Send reset link' }).click();
-  await expect(m).toContainText('a reset link is on its way');
+  await page.getByRole('button', { name: 'Account' }).click(); // the sign-in page
+  const card = page.locator('.signin-card');
+  await card.getByRole('button', { name: 'Forgot password?' }).click();
+  await expect(card.locator('h2')).toHaveText('Reset password');
+  await card.locator('input[type="email"]').fill('dee@example.com');
+  await card.getByRole('button', { name: 'Send reset link' }).click();
+  await expect(card).toContainText('a reset link is on its way');
   const token = await page.evaluate(() => (window as any).__beadloomCloudFake.lastResetToken('dee@example.com'));
   expect(token).toBeTruthy();
 
-  // the link in the email lands back in the app with the token (a fresh load)
+  // the link in the email (first sent before pages had addresses, so the old
+  // form) lands on the sign-in page with the token (a fresh load)
   await page.evaluate((t) => {
     location.hash = `auth=reset?token=${t}`;
   }, token);
   await page.reload();
-  await waitForReady(page);
-  await expect(page.locator('.modal')).toContainText('Choose a new password');
-  await page.locator('.modal input[type="password"]').fill('second-password');
-  await page.locator('.modal').getByRole('button', { name: 'Change password' }).click();
+  await expect(page).toHaveURL(/#\/signin\?/);
+  await expect(card.locator('h2')).toHaveText('Choose a new password');
+  await card.locator('.pw-field input').fill('second-password');
+  await card.getByRole('button', { name: 'Change password' }).click();
   await expect(page.locator('.notice')).toHaveText(/Password changed/);
-  expect(await page.evaluate(() => location.hash)).toBe('#/design'); // the token's gone from the address
+  expect(await page.evaluate(() => location.hash)).toBe('#/signin'); // the token's gone from the address
 
-  await page.locator('.modal input[type="email"]').fill('dee@example.com');
-  await page.locator('.modal input[type="password"]').fill('second-password');
-  await page.locator('.modal').getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.locator('.modal')).toContainText('dee@example.com');
+  await card.locator('input[type="email"]').fill('dee@example.com');
+  await card.locator('.pw-field input').fill('second-password');
+  await card.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page).toHaveURL(/#\/home$/); // signed in: on to their home
   expect((await cloudState(page)).user).toBe('dee@example.com');
 });
 
@@ -254,13 +269,8 @@ test('an out-of-date database blocks sync with a plain message; the app tracks t
   await page.goto('/#/design');
   await waitForReady(page);
   await page.evaluate(() => (window as any).__beadloomCloudFake.setSchemaVersion(0));
-  await page.getByRole('button', { name: 'Account' }).click();
+  await createAccount(page, 'eve@example.com', 'correct-horse');
   const m = page.locator('.modal');
-  await m.getByRole('button', { name: 'Create account' }).click();
-  await m.locator('input[type="text"]').fill('Tester');
-  await m.locator('input[type="email"]').fill('eve@example.com');
-  await m.locator('input[type="password"]').fill('correct-horse');
-  await m.getByRole('button', { name: 'Create account' }).click();
   await expect.poll(async () => (await cloudState(page)).status).toBe('error');
   await expect(m.locator('.acct-status')).toContainText(`schema 0, needs ${required}`);
   await expect(m.locator('.acct-status')).toContainText('npm run db:migrate');
@@ -301,8 +311,8 @@ test('the eye button shows and hides the password, typed or filled in', async ({
   await useFakeCloud(page);
   await page.goto('/#/design');
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Account' }).click();
-  const m = page.locator('.modal');
+  await page.getByRole('button', { name: 'Account' }).click(); // signed out: the sign-in page
+  const m = page.locator('.signin-card');
   const field = m.locator('.pw-field input');
   await field.fill('saved-by-the-browser'); // as a password manager would
   await expect(field).toHaveAttribute('type', 'password');

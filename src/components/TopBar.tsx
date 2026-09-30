@@ -9,8 +9,10 @@ import { Icon } from './icons';
 import { downloadText, exportPNG, pickTextFile } from '../lib/designFormat';
 import * as storage from '../lib/storage';
 import { gridTypeFor } from '../lib/gridTypes';
+import { useNavigate } from 'react-router';
+import { inCloudStorage } from '../lib/stores';
 
-export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help' | 'account' | 'home' | 'settings';
+export type DialogId = 'new' | 'open' | 'saveas' | 'resize' | 'help' | 'account' | 'home' | 'settings' | 'share';
 
 /** Press-and-hold auto-repeat for the ± steppers, one history entry per hold. */
 function useHoldRepeat(step: () => void, onStart?: () => void) {
@@ -152,7 +154,7 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
   return (
     <div className="topbar">
       {/* back to the home page; without accounts there is none, just the name */}
-      {s.cloudAvailable ? <HomeButton onClick={() => onDialog('home')} /> : <div className="brand">Chromattice</div>}
+      {s.cloudAvailable ? <SiteNav onHome={() => onDialog('home')} /> : <div className="brand">Chromattice</div>}
 
       <Menu
         title="File menu"
@@ -247,6 +249,8 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
         aria-label="Design name"
         title="Design name"
       />
+      <SaveStatus onSaveAs={() => onDialog('saveas')} />
+      <ShareButton onClick={() => onDialog('share')} />
 
       <div className="spacer" />
 
@@ -257,12 +261,73 @@ export default function TopBar({ onDialog }: { onDialog: (d: DialogId) => void }
 }
 
 /** Back to the home page (gallery, local vs account); only with accounts. */
-function HomeButton({ onClick }: { onClick: () => void }) {
-  const available = useStore((s) => s.cloudAvailable);
+/** The way out of the designer: the mark (Home), and the rest of the site. */
+function SiteNav({ onHome }: { onHome: () => void }) {
+  const navigate = useNavigate();
+  const staff = useStore((st) => st.cloudStanding.role !== 'user');
+  return (
+    <div className="site-nav">
+      <button className="btn icon-btn home-btn" onClick={onHome} aria-label="Home" title="Home">
+        <LogoMark size={28} />
+        <span className="home-btn-label">Home</span>
+      </button>
+      <Menu title="Go to" label={<Icon name="chevron-down" size={15} />}>
+        {(close) => (
+          <>
+            <MenuItem onClick={onHome} close={close}>
+              Home
+            </MenuItem>
+            <MenuItem onClick={() => navigate('/gallery')} close={close}>
+              Gallery
+            </MenuItem>
+            <MenuItem onClick={() => navigate('/journal')} close={close}>
+              Journal
+            </MenuItem>
+            {staff && (
+              <MenuItem onClick={() => navigate('/admin')} close={close}>
+                Admin
+              </MenuItem>
+            )}
+          </>
+        )}
+      </Menu>
+    </div>
+  );
+}
+
+/** Where the open design is saved, and whether the latest changes are. Tap to save. */
+function SaveStatus({ onSaveAs }: { onSaveAs: () => void }) {
+  const slotPath = useStore((st) => st.slotPath);
+  const dirty = useStore((st) => st.dirty);
+  const cloudy = inCloudStorage(slotPath);
+  const where = !slotPath ? '' : storeLabel(cloudy);
+  const state: 'unsaved' | 'dirty' | 'saved' = !slotPath ? 'unsaved' : dirty ? 'dirty' : 'saved';
+  const text = state === 'unsaved' ? 'Not saved yet' : state === 'dirty' ? 'Unsaved changes' : `Saved${where ? ' · ' + where : ''}`;
+  return (
+    <button
+      className={'save-status ' + state}
+      aria-label={`${text}${slotPath ? ` (${slotPath})` : ''}${state === 'saved' ? '' : ' — save'}`}
+      title={slotPath ? `${slotPath}${state === 'saved' ? '' : ' — tap to save'}` : 'Tap to save'}
+      onClick={() => {
+        if (state === 'saved') return;
+        if (!useStore.getState().quickSave()) onSaveAs();
+      }}
+    >
+      <Icon name={!slotPath ? 'save' : cloudy ? 'cloud' : 'device'} size={15} />
+      <span className="save-status-text">{text}</span>
+    </button>
+  );
+}
+const storeLabel = (cloudy: boolean) => (cloudy ? 'Cloud' : useStore.getState().cloudAvailable ? 'Local' : '');
+
+/** Share the open design (friends, or everyone via the gallery). */
+function ShareButton({ onClick }: { onClick: () => void }) {
+  const available = useStore((st) => st.cloudAvailable);
   if (!available) return null;
   return (
-    <button className="btn icon-btn home-btn" onClick={onClick} aria-label="Home" title="Home">
-      <LogoMark size={28} />
+    <button className="btn share-btn" onClick={onClick} aria-label="Share this design" title="Share this design">
+      <Icon name="share" size={16} />
+      <span className="share-btn-label">Share</span>
     </button>
   );
 }

@@ -2,19 +2,19 @@
 // an account — what's happened (activity), what friends are sharing, and
 // their journal. The designer stays a focused workspace; this is the overview.
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import Avatar from './Avatar';
 import { Icon, type IconName } from './icons';
 import { PostEditor } from './Posts';
 import { linkTarget } from './Comments';
 import type { HomeActions } from './Home';
-import { cloud } from '../lib/cloud';
+import { cloud, syncOnLook } from '../lib/cloud';
 import type { Friend, Post, SharedItem } from '../lib/cloud/backend';
 import { readActivityLog, type ActivityKind, type LoggedEvent } from '../lib/cloud/activity';
 import { serializeDesign } from '../lib/designFormat';
-import { designThumbnail, type FileEntry } from '../lib/library';
-import { CLOUD_STORAGE, designLibrary, inCloudStorage } from '../lib/stores';
+import { designThumbnail, isInTrash, type FileEntry } from '../lib/library';
+import { CLOUD_STORAGE, LOCAL_STORAGE, designLibrary, inCloudStorage } from '../lib/stores';
 
 /** "just now", "5 min ago", "3 h ago", "2 days ago", else the date. */
 function ago(iso: string | null | undefined): string {
@@ -41,6 +41,7 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 
 export default function PersonalHome(actions: HomeActions) {
   const user = useStore((s) => s.cloudUser);
+  useEffect(syncOnLook, []);
   return (
     <div className="personal-home">
       <Continue onClose={actions.onClose} />
@@ -83,61 +84,226 @@ function Continue({ onClose }: { onClose: () => void }) {
 
 // ---- your designs -------------------------------------------------------------
 
+type Where = 'all' | 'local' | 'cloud';
+type SortBy = 'recent' | 'name' | 'size';
+const COLLAPSED_KEY = 'beadloom.home.collapsed';
+
+/** Every saved design (both stores when signed in), by folder, with filters. */
 function YourDesigns({ onClose, onNewDesign, onOpenFiles }: HomeActions) {
   const nonce = useStore((s) => s.libraryNonce);
   const user = useStore((s) => s.cloudUser);
+  const [query, setQuery] = useState('');
+  const [where, setWhere] = useState<Where>('all');
+  const [grid, setGrid] = useState('');
+  const [sort, setSort] = useState<SortBy>('recent');
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]'));
+    } catch {
+      return new Set();
+    }
+  });
+  const toggle = (folder: string) => {
+    const next = new Set(collapsed);
+    if (next.has(folder)) next.delete(folder);
+    else next.add(folder);
+    setCollapsed(next);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+    } catch {
+      /* ignore */
+    }
+  };
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const recent = useMemo(() => designLibrary.recent(11), [nonce, user]);
+  const all = useMemo(() => designLibrary.allFiles().filter((f) => !isInTrash(f.path)), [nonce, user]);
+  const gridTypes = useMemo(() => [...new Set(all.map((f) => f.meta.typeLabel))].sort(), [all]);
+  const q = query.trim().toLowerCase();
+  const shown = useMemo(() => {
+    const list = all.filter(
+      (f) =>
+        (!q || f.name.toLowerCase().includes(q) || f.folder.toLowerCase().includes(q)) &&
+        (where === 'all' || inCloudStorage(f.path) === (where === 'cloud')) &&
+        (!grid || f.meta.typeLabel === grid),
+    );
+    const by: Record<SortBy, (a: FileEntry, b: FileEntry) => number> = {
+      recent: (a, b) => b.meta.modified - a.meta.modified,
+      name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }),
+      size: (a, b) => b.meta.sizeValue - a.meta.sizeValue,
+    };
+    return list.sort(by[sort]);
+  }, [all, q, where, grid, sort]);
+  // grouped by folder (in the order their designs come); flat while searching
+  const groups = useMemo(() => {
+    const m = new Map<string, FileEntry[]>();
+    for (const f of shown) m.set(f.folder, [...(m.get(f.folder) ?? []), f]);
+    const list = [...m];
+    if (sort === 'name') list.sort(([a], [b]) => a.localeCompare(b));
+    return list;
+  }, [shown, sort]);
+
   const open = (e: FileEntry) => {
     const s = useStore.getState();
     if (s.dirty && e.path !== s.slotPath && !confirm(`Discard unsaved changes and open “${e.name}”?`)) return;
     s.loadFromSlot(e.path);
     onClose();
   };
+  const filtering = !!q || where !== 'all' || !!grid;
+
   return (
     <Section
       title="Your designs"
       action={
-        <button className="btn" onClick={onOpenFiles}>
-          <Icon name="folder" size={16} /> All designs…
-        </button>
+        <>
+          <button className="btn" onClick={onNewDesign}>
+            <Icon name="plus" size={16} /> New design
+          </button>
+          <button className="btn" onClick={onOpenFiles}>
+            <Icon name="folder" size={16} /> All designs…
+          </button>
+        </>
       }
     >
-      <ul className="design-strip">
-        <li>
-          <button className="design-tile new" onClick={onNewDesign}>
-            <span className="design-tile-thumb">
-              <Icon name="plus" size={32} />
+      {all.length === 0 ? (
+        <p className="hint">Nothing saved yet. Designs you save appear here.</p>
+      ) : (
+        <>
+          <div className="design-filters">
+            <label className="fb-search">
+              <Icon name="search" size={14} />
+              <input
+                type="search"
+                aria-label="Find a design"
+                placeholder="Find by name or folder"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </label>
+            {cloud.available && user && (
+              <div className="seg" role="radiogroup" aria-label="Where">
+                {(['all', 'local', 'cloud'] as const).map((w) => (
+                  <button key={w} role="radio" aria-checked={where === w} className={where === w ? 'on' : ''} onClick={() => setWhere(w)}>
+                    {w === 'all' ? 'All' : w === 'local' ? 'Local' : 'Cloud'}
+                  </button>
+                ))}
+              </div>
+            )}
+            {gridTypes.length > 1 && (
+              <select aria-label="Grid type" value={grid} onChange={(e) => setGrid(e.target.value)}>
+                <option value="">Any grid</option>
+                {gridTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as SortBy)}>
+              <option value="recent">Most recent</option>
+              <option value="name">Name</option>
+              <option value="size">Size</option>
+            </select>
+            <span className="hint design-count">
+              {filtering ? `${shown.length} of ${all.length}` : all.length} design{all.length === 1 ? '' : 's'}
             </span>
-            <span className="design-tile-name">New design</span>
-          </button>
-        </li>
-        {recent.map((e) => (
-          <li key={e.path}>
-            <button className="design-tile" onClick={() => open(e)}>
-              <span className="design-tile-thumb">
-                {(() => {
-                  const src = designLibrary.thumbnail(e.path);
-                  return src && <img src={src} alt="" />;
-                })()}
-                {cloud.available && (
-                  <span className={'store-badge ' + (inCloudStorage(e.path) ? 'cloud' : 'local')}>
-                    <Icon name={inCloudStorage(e.path) ? 'cloud' : 'device'} size={12} />
-                    {inCloudStorage(e.path) ? 'Cloud' : 'Local'}
-                  </span>
-                )}
-              </span>
-              <span className="design-tile-name">{e.name}</span>
-              <span className="hint">{ago(e.meta.modified ? new Date(e.meta.modified).toISOString() : null)}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {recent.length === 0 && <p className="hint">Nothing saved yet. Designs you save appear here.</p>}
-      {user && recent.length > 0 && !recent.some((e) => e.path.startsWith(CLOUD_STORAGE + '/')) && (
-        <p className="hint">These are in Local Storage, on this device only. Move one to Cloud Storage in All designs… to have it everywhere, or to share it.</p>
+          </div>
+          {shown.length === 0 ? (
+            <p className="hint">No designs match.</p>
+          ) : q ? (
+            <ul className="design-grid">
+              {shown.map((e) => (
+                <li key={e.path}>
+                  <DesignTile entry={e} showFolder onOpen={open} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            groups.map(([folder, files]) => {
+              const shut = collapsed.has(folder);
+              return (
+                <section key={folder} className="design-folder" aria-label={folderLabel(folder)}>
+                  <button className="design-folder-head" aria-expanded={!shut} onClick={() => toggle(folder)}>
+                    <Icon name="chevron-right" size={14} className={shut ? '' : 'open'} />
+                    <Icon name={folderIcon(folder)} size={16} />
+                    <b>{folderLabel(folder)}</b>
+                    <span className="hint">{files.length}</span>
+                  </button>
+                  {!shut && (
+                    <ul className="design-grid">
+                      {files.map((e) => (
+                        <li key={e.path}>
+                          <DesignTile entry={e} onOpen={open} />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              );
+            })
+          )}
+          {user && !all.some((e) => e.path.startsWith(CLOUD_STORAGE + '/')) && (
+            <p className="hint">
+              These are in Local Storage, on this device only. Move one to Cloud Storage in All designs… to have it
+              everywhere, or to share it.
+            </p>
+          )}
+        </>
       )}
     </Section>
+  );
+}
+
+/** Which store a folder is in, as an icon (no accounts: just a folder). */
+function folderIcon(folder: string): IconName {
+  const store = folder.split('/')[0];
+  return store === CLOUD_STORAGE ? 'cloud' : store === LOCAL_STORAGE ? 'device' : 'folder';
+}
+
+/** "Cloud Storage › C64 Homage", "Local Storage", or (no accounts) the folder. */
+function folderLabel(folder: string): string {
+  if (!folder) return 'Designs';
+  return folder.split('/').join(' › ');
+}
+
+/** A design, compact; its thumbnail drawn once it scrolls into view. */
+function DesignTile({ entry: e, showFolder, onOpen }: { entry: FileEntry; showFolder?: boolean; onOpen: (e: FileEntry) => void }) {
+  const [seen, setSeen] = useState(false);
+  const watching = useRef<IntersectionObserver | null>(null);
+  const ref = useCallback((el: HTMLElement | null) => {
+    watching.current?.disconnect(); // unmounting (el is null), or a new element
+    watching.current = null;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') return setSeen(true);
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((x) => x.isIntersecting)) return;
+        setSeen(true);
+        io.disconnect();
+      },
+      { rootMargin: '200px' },
+    );
+    io.observe(el);
+    watching.current = io;
+  }, []);
+  const src = seen ? designLibrary.thumbnail(e.path) : null;
+  const cloudy = inCloudStorage(e.path);
+  const badge = useStore((st) => !!st.cloudUser) && cloud.available; // signed out, everything is local
+  return (
+    <button ref={ref} className="design-tile" onClick={() => onOpen(e)} title={`${e.name} · ${e.meta.sizeLabel}`}>
+      <span className="design-tile-thumb">
+        {src && <img src={src} alt="" />}
+        {badge && (
+          <span className={'store-badge ' + (cloudy ? 'cloud' : 'local')}>
+            <Icon name={cloudy ? 'cloud' : 'device'} size={12} />
+            {cloudy ? 'Cloud' : 'Local'}
+          </span>
+        )}
+      </span>
+      <span className="design-tile-name">{e.name}</span>
+      <span className="hint">
+        {showFolder ? folderLabel(e.folder) : ago(e.meta.modified ? new Date(e.meta.modified).toISOString() : null)}
+      </span>
+    </button>
   );
 }
 

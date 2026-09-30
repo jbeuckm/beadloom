@@ -5,6 +5,8 @@
 // `window.__beadloomCloudFake`.
 
 import type {
+  ReportKind,
+  StaffRole,
   AuthResult,
   CloudBackend,
   CloudUser,
@@ -23,8 +25,13 @@ const KEY = 'beadloom.fakeCloud';
 const SESSION = 'beadloom.fakeCloud.session';
 
 interface Server {
-  users: Array<CloudUser & { password: string }>;
-  items: Array<ItemRow & { owner_id: string; published?: boolean; published_at?: string | null }>;
+  users: Array<CloudUser & { password: string; role?: StaffRole; banned?: boolean }>;
+  suspensions?: Array<{ user_id: string; reason: string }>;
+  reports?: Array<{ id: string; kind: ReportKind; target_id: string; reporter_id: string; reason: string; created_at: string; resolved?: string }>;
+  log?: Array<{ at: string; actor_id: string; action: string; target_kind: string; target_id: string; reason: string | null }>;
+  items: Array<
+    ItemRow & { owner_id: string; published?: boolean; published_at?: string | null; hidden_at?: string | null; hidden_reason?: string | null }
+  >;
   folders: Array<FolderRow & { owner_id: string }>;
   trash: Array<TrashOriginRow & { owner_id: string }>;
   resets: Array<{ token: string; email: string }>;
@@ -43,6 +50,8 @@ interface Server {
     created_at: string;
     updated_at: string;
     published_at: string | null;
+    hidden_at?: string | null;
+    hidden_reason?: string | null;
   }>;
   /** Simulated outage: every request fails while set. */
   offline: boolean;
@@ -67,19 +76,27 @@ const people = (s: Server) => {
   s.reactions ??= [];
   s.comments ??= [];
   s.posts ??= [];
+  s.suspensions ??= [];
+  s.reports ??= [];
+  s.log ??= [];
   return s as Server &
-    Required<Pick<Server, 'profiles' | 'friendships' | 'shares' | 'reactions' | 'comments' | 'posts'>>;
+    Required<
+      Pick<Server, 'profiles' | 'friendships' | 'shares' | 'reactions' | 'comments' | 'posts' | 'suspensions' | 'reports' | 'log'>
+    >;
 };
 /** What posts_read allows. */
 const canRead = (s: Server, p: NonNullable<Server['posts']>[number], uid: string | null) =>
-  p.visibility === 'public' ||
-  (!!uid && (p.author_id === uid || (p.visibility === 'friends' && areFriends(s, p.author_id, uid))));
+  (!!uid && p.author_id === uid) ||
+  (!p.hidden_at && p.visibility === 'public') ||
+  (!p.hidden_at && !!uid && p.visibility === 'friends' && areFriends(s, p.author_id, uid));
 
 /** What private.can_see() allows: published designs, my own, shared with me,
  *  and those in a post I can read. */
 const canSee = (s: Server, itemId: string, uid: string | null) => {
   const i = s.items.find((x) => x.id === itemId);
   if (!i || i.deleted_at) return false;
+  if (uid && i.owner_id === uid) return true;
+  if (i.hidden_at) return false; // hidden by a moderator: its owner's alone
   if (i.published && i.collection === 'design') return true;
   if (people(s).posts.some((p) => p.visibility !== 'draft' && p.design_ids.includes(itemId) && canRead(s, p, uid)))
     return true;
@@ -89,6 +106,9 @@ const canSee = (s: Server, itemId: string, uid: string | null) => {
     (people(s).shares.some((sh) => sh.item_id === itemId && sh.grantee_id === uid) && areFriends(s, i.owner_id, uid))
   );
 };
+const roleOf = (s: Server, uid: string | null): StaffRole => (uid && s.users.find((u) => u.id === uid)?.role) || 'user';
+const suspended = (s: Server, uid: string) => people(s).suspensions.find((x) => x.user_id === uid)?.reason ?? null;
+const SUSPENDED = 'Your account is suspended';
 const toPost = (s: Server, p: NonNullable<Server['posts']>[number], uid: string | null): Post => {
   const a = uid ? people(s).profiles.find((x) => x.user_id === p.author_id) : undefined;
   return {
@@ -102,6 +122,7 @@ const toPost = (s: Server, p: NonNullable<Server['posts']>[number], uid: string 
     createdAt: p.created_at,
     updatedAt: p.updated_at,
     publishedAt: p.published_at,
+    hiddenReason: p.author_id === uid ? (p.hidden_reason ?? null) : null,
   };
 };
 const areFriends = (s: Server, a: string, b: string) =>
@@ -121,6 +142,8 @@ export function createFakeBackend(): CloudBackend & {
     lastResetToken(email: string): string | null;
     /** Write a row as if another device had synced it. */
     seedItem(row: ItemRow & { owner_id: string }): void;
+    /** Give an account a staff role, as `npm run set-role` does on Neon. */
+    setRole(email: string, role: StaffRole): void;
   };
 } {
   const listeners = new Set<(u: CloudUser | null) => void>();
@@ -140,6 +163,19 @@ export function createFakeBackend(): CloudBackend & {
     if (!sessionUser) throw new Error('Not signed in');
     return sessionUser.id;
   };
+  /** The server as a member of staff sees it; refuses anyone else. */
+  const staff = (need: 'moderator' | 'admin') => {
+    const s = people(load());
+    const role = roleOf(s, me());
+    if (need === 'admin' ? role !== 'admin' : role === 'user')
+      throw new Error(need === 'admin' ? 'Only an admin can do that' : 'Only staff can do that');
+    return s;
+  };
+  const resolve = (s: Server, kind: string, id: string, how: string) => {
+    for (const r of people(s).reports) if (r.kind === kind && r.target_id === id && !r.resolved) r.resolved = how;
+  };
+  const logged = (s: Server, action: string, kind: string, id: string, reason: string | null) =>
+    people(s).log.push({ at: new Date().toISOString(), actor_id: me(), action, target_kind: kind, target_id: id, reason });
   const guard = () => {
     if (load().offline) throw new Error('Network error');
   };
@@ -167,6 +203,7 @@ export function createFakeBackend(): CloudBackend & {
       const s = load();
       const u = s.users.find((x) => x.email.toLowerCase() === email.toLowerCase());
       if (!u || u.password !== password) return { ok: false, error: 'Invalid email or password' };
+      if (u.banned) return { ok: false, error: 'This account has been banned' };
       setUser(pub(u));
       return { ok: true };
     },
@@ -349,6 +386,7 @@ export function createFakeBackend(): CloudBackend & {
       const id = me();
       const s = people(load());
       if (!s.profiles.some((x) => x.user_id === id)) return { ok: false, error: 'Pick a username first' };
+      if (suspended(s, id)) return { ok: false, error: SUSPENDED };
       if (s.friendships.some((f) => [f.requester, f.addressee].includes(id) && [f.requester, f.addressee].includes(userId)))
         return { ok: false, error: 'You already have a friend request with them' };
       s.friendships.push({ requester: id, addressee: userId, accepted: false });
@@ -385,7 +423,7 @@ export function createFakeBackend(): CloudBackend & {
         return p ? { id: uid, username: p.username, avatar: p.avatar ?? null } : null;
       };
       return s.items
-        .filter((i) => i.published && i.collection === 'design' && !i.deleted_at)
+        .filter((i) => i.published && i.collection === 'design' && !i.deleted_at && !i.hidden_at)
         .sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''))
         .slice(0, limit)
         .map((i) => ({ id: i.id, doc: i.doc, publishedAt: i.published_at ?? '', owner: name(i.owner_id) }));
@@ -397,7 +435,7 @@ export function createFakeBackend(): CloudBackend & {
       return s.shares
         .filter((sh) => sh.grantee_id === id)
         .map((sh) => s.items.find((i) => i.id === sh.item_id))
-        .filter((i): i is NonNullable<typeof i> => !!i && !i.deleted_at && areFriends(s, i.owner_id, id))
+        .filter((i): i is NonNullable<typeof i> => !!i && !i.deleted_at && !i.hidden_at && areFriends(s, i.owner_id, id))
         .map((i) => {
           const p = s.profiles.find((x) => x.user_id === i.owner_id);
           return {
@@ -418,14 +456,16 @@ export function createFakeBackend(): CloudBackend & {
       return {
         published: !!item?.published,
         friendIds: item ? s.shares.filter((sh) => sh.item_id === itemId).map((sh) => sh.grantee_id) : [],
+        hiddenReason: item?.hidden_reason ?? null,
       };
     },
     async setPublished(itemId, published) {
       guard();
       const id = me();
-      const s = load();
+      const s = people(load());
       for (const i of s.items)
         if (i.id === itemId && i.owner_id === id) {
+          if (published && !i.published && suspended(s, id)) throw new Error(`Publishing: ${SUSPENDED}`);
           i.published = published;
           i.published_at = published ? new Date().toISOString() : null;
         }
@@ -451,6 +491,8 @@ export function createFakeBackend(): CloudBackend & {
       const s = people(load());
       if (!s.items.some((i) => i.id === itemId && i.owner_id === id)) throw new Error('Sharing: not your item');
       if (friendIds.some((f) => !areFriends(s, id, f))) throw new Error('Sharing: only with friends');
+      if (suspended(s, id) && friendIds.some((f) => !s.shares.some((sh) => sh.item_id === itemId && sh.grantee_id === f)))
+        throw new Error(`Sharing: ${SUSPENDED}`);
       s.shares = s.shares.filter((sh) => sh.item_id !== itemId);
       for (const f of friendIds) s.shares.push({ item_id: itemId, grantee_id: f });
       save(s);
@@ -485,6 +527,7 @@ export function createFakeBackend(): CloudBackend & {
       const s = people(load());
       const item = s.items.find((i) => i.id === itemId);
       if (!item || !canSee(s, itemId, id)) throw new Error('Saving your rating: not allowed');
+      if (suspended(s, id)) throw new Error(`Saving your rating: ${SUSPENDED}`);
       if (change.stars != null && !(change.stars >= 1 && change.stars <= 5)) throw new Error('Saving your rating: 1–5 stars');
       let r = s.reactions.find((x) => x.item_id === itemId && x.user_id === id);
       if (!r) s.reactions.push((r = { item_id: itemId, user_id: id, liked: false, stars: null }));
@@ -522,6 +565,7 @@ export function createFakeBackend(): CloudBackend & {
       if (!text) return { ok: false, error: 'Write something first' };
       if (!s.profiles.some((p) => p.user_id === id)) return { ok: false, error: 'Pick a username (in Account) before commenting' };
       if (!canSee(s, itemId, id)) return { ok: false, error: 'Could not post the comment' };
+      if (suspended(s, id)) return { ok: false, error: SUSPENDED };
       s.comments.push({
         id: 'c_' + Math.random().toString(36).slice(2, 10),
         item_id: itemId,
@@ -583,6 +627,7 @@ export function createFakeBackend(): CloudBackend & {
       const s = people(load());
       if (!s.profiles.some((p) => p.user_id === id)) return { ok: false, error: 'Pick a username (in Account) before posting' };
       if (!d.title.trim()) return { ok: false, error: 'Give it a title' };
+      if (d.visibility !== 'draft' && suspended(s, id)) return { ok: false, error: SUSPENDED };
       if (d.designIds.some((x) => s.items.find((i) => i.id === x)?.owner_id !== id))
         return { ok: false, error: 'Could not save the post' };
       const now = new Date().toISOString();
@@ -621,7 +666,203 @@ export function createFakeBackend(): CloudBackend & {
       save(s);
     },
 
+    // ---- standing, reports, moderation ---------------------------------------------
+    async standing() {
+      guard();
+      const s = people(load());
+      const id = me();
+      return { role: roleOf(s, id), suspendedReason: suspended(s, id) };
+    },
+    async report(kind, targetId, reason) {
+      guard();
+      const id = me();
+      const s = people(load());
+      if (!reason.trim()) return { ok: false, error: 'Say what’s wrong' };
+      if (suspended(s, id)) return { ok: false, error: 'Your account can’t file reports right now' };
+      s.reports.push({
+        id: crypto.randomUUID(),
+        kind,
+        target_id: targetId,
+        reporter_id: id,
+        reason: reason.trim(),
+        created_at: new Date().toISOString(),
+      });
+      save(s);
+      return { ok: true };
+    },
+    async staffQueue() {
+      guard();
+      const s = staff('moderator');
+      const open = s.reports.filter((r) => !r.resolved);
+      const keys = [...new Set(open.map((r) => `${r.kind}:${r.target_id}`))];
+      return keys.map((k) => {
+        const rs = open.filter((r) => `${r.kind}:${r.target_id}` === k);
+        const { kind, target_id } = rs[0];
+        const item = kind === 'design' ? s.items.find((i) => i.id === target_id) : undefined;
+        const post = kind === 'post' ? s.posts.find((p) => p.id === target_id) : undefined;
+        const comment = kind === 'comment' ? s.comments.find((c) => c.id === target_id) : undefined;
+        const ownerId = item?.owner_id ?? post?.author_id ?? comment?.author_id ?? null;
+        return {
+          kind,
+          targetId: target_id,
+          reports: rs.length,
+          reasons: rs.map((r) => r.reason),
+          firstAt: rs[0].created_at,
+          title: item?.path ?? post?.title ?? 'Comment',
+          ownerId,
+          ownerName: s.profiles.find((p) => p.user_id === ownerId)?.username ?? null,
+          doc: item?.doc ?? null,
+          body: post?.body ?? comment?.body ?? null,
+          hidden: !!(item?.hidden_at ?? post?.hidden_at),
+        };
+      });
+    },
+    async staffContent(what) {
+      guard();
+      const s = staff('moderator');
+      const name = (uid: string) => s.profiles.find((p) => p.user_id === uid)?.username ?? null;
+      if (what === 'design')
+        return s.items
+          .filter((i) => i.collection === 'design' && !i.deleted_at && (i.published || i.hidden_at))
+          .map((i) => ({
+            id: i.id,
+            title: i.path,
+            ownerId: i.owner_id,
+            ownerName: name(i.owner_id),
+            doc: i.doc,
+            body: null,
+            at: i.published_at ?? i.modified,
+            hidden: !!i.hidden_at,
+            hiddenReason: i.hidden_reason ?? null,
+          }));
+      return s.posts
+        .filter((p) => p.visibility !== 'draft')
+        .map((p) => ({
+          id: p.id,
+          title: p.title,
+          ownerId: p.author_id,
+          ownerName: name(p.author_id),
+          doc: null,
+          body: p.body,
+          at: p.published_at,
+          hidden: !!p.hidden_at,
+          hiddenReason: p.hidden_reason ?? null,
+        }));
+    },
+    async staffSetHidden(what, id, hide, reason) {
+      guard();
+      const s = staff('moderator');
+      if (hide && !reason?.trim()) throw new Error('Hiding: say why it is hidden');
+      const t = what === 'design' ? s.items.find((i) => i.id === id) : s.posts.find((p) => p.id === id);
+      if (t) {
+        t.hidden_at = hide ? new Date().toISOString() : null;
+        t.hidden_reason = hide ? reason : null;
+      }
+      resolve(s, what, id, hide ? 'hidden' : 'restored');
+      logged(s, hide ? 'hide' : 'restore', what, id, reason);
+      save(s);
+    },
+    async staffDeleteComment(id, reason) {
+      guard();
+      const s = staff('moderator');
+      s.comments = s.comments.filter((c) => c.id !== id);
+      resolve(s, 'comment', id, 'deleted');
+      logged(s, 'delete', 'comment', id, reason);
+      save(s);
+    },
+    async staffDismiss(kind, id, reason) {
+      guard();
+      const s = staff('moderator');
+      resolve(s, kind, id, 'dismissed');
+      logged(s, 'dismiss', kind, id, reason);
+      save(s);
+    },
+    async staffUsers(query) {
+      guard();
+      const s = staff('moderator');
+      const q = query.trim().toLowerCase();
+      return s.users
+        .map((u) => ({ u, username: s.profiles.find((p) => p.user_id === u.id)?.username ?? null }))
+        .filter(({ u, username }) => !q || [u.email, u.name ?? '', username ?? ''].some((x) => x.toLowerCase().includes(q)))
+        .map(({ u, username }) => ({
+          id: u.id,
+          email: u.email,
+          name: u.name ?? '',
+          username,
+          role: u.role ?? 'user',
+          banned: !!u.banned,
+          suspendedReason: suspended(s, u.id),
+          createdAt: '',
+          designs: s.items.filter((i) => i.owner_id === u.id && !i.deleted_at && i.collection === 'design').length,
+          published: s.items.filter((i) => i.owner_id === u.id && !i.deleted_at && i.published).length,
+        }));
+    },
+    async staffSuspend(userId, reason) {
+      guard();
+      const s = staff('moderator');
+      if (!reason.trim()) throw new Error('Suspending: say why');
+      if (roleOf(s, userId) !== 'user' && roleOf(s, me()) !== 'admin') throw new Error('Suspending: only an admin can suspend staff');
+      s.suspensions = s.suspensions.filter((x) => x.user_id !== userId);
+      s.suspensions.push({ user_id: userId, reason });
+      logged(s, 'suspend', 'user', userId, reason);
+      save(s);
+    },
+    async staffUnsuspend(userId) {
+      guard();
+      const s = staff('moderator');
+      s.suspensions = s.suspensions.filter((x) => x.user_id !== userId);
+      logged(s, 'unsuspend', 'user', userId, null);
+      save(s);
+    },
+    async adminSetRole(userId, role) {
+      guard();
+      const s = staff('admin');
+      if (userId === me() && role !== 'admin') throw new Error("Changing the role: you can't remove your own admin role");
+      const u = s.users.find((x) => x.id === userId);
+      if (u) u.role = role;
+      logged(s, `role:${role}`, 'user', userId, null);
+      save(s);
+    },
+    async adminBan(userId, reason) {
+      guard();
+      const s = staff('admin');
+      if (userId === me()) throw new Error("Banning: you can't ban yourself");
+      const u = s.users.find((x) => x.id === userId);
+      if (u) u.banned = true;
+      logged(s, 'ban', 'user', userId, reason);
+      save(s);
+    },
+    async adminUnban(userId) {
+      guard();
+      const s = staff('admin');
+      const u = s.users.find((x) => x.id === userId);
+      if (u) u.banned = false;
+      logged(s, 'unban', 'user', userId, null);
+      save(s);
+    },
+    async staffLog(limit) {
+      guard();
+      const s = staff('moderator');
+      return [...s.log]
+        .reverse()
+        .slice(0, limit)
+        .map((l) => ({
+          at: l.at,
+          actor: s.profiles.find((p) => p.user_id === l.actor_id)?.username ?? l.actor_id,
+          action: l.action,
+          targetKind: l.target_kind,
+          targetId: l.target_id,
+          reason: l.reason,
+        }));
+    },
+
     fake: {
+      setRole(email: string, role: StaffRole) {
+        const s = load();
+        const u = s.users.find((x) => x.email.toLowerCase() === email.toLowerCase());
+        if (u) u.role = role;
+        save(s);
+      },
       setOffline(v) {
         const s = load();
         s.offline = v;

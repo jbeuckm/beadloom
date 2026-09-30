@@ -7,6 +7,7 @@ import Avatar from './Avatar';
 import { Icon } from './icons';
 import { cloud } from '../lib/cloud';
 import type { Comment, GalleryItem } from '../lib/cloud/backend';
+import { ReportButton } from './Moderation';
 import { designThumbnail } from '../lib/library';
 
 export default function Comments({ itemId, onCount }: { itemId: string; onCount?: (n: number) => void }) {
@@ -67,6 +68,7 @@ export default function Comments({ itemId, onCount }: { itemId: string; onCount?
               </span>
               <CommentText body={c.body} />
             </div>
+            <ReportButton kind="comment" targetId={c.id} ownerId={c.author?.id ?? null} compact />
             {c.canDelete && (
               <button
                 className="btn ghost mini"

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { browserItem, openFileMenu, pickTool, snapshot, tapCell, waitForReady } from './helpers';
+import { browserItem, fileAction, fileActionItem, openFileMenu, pickTool, snapshot, tapCell, waitForReady } from './helpers';
 
 // Home page, usernames, friends, sharing and profile pictures, against the
 // in-memory fake cloud (lib/cloud/fake.ts). The fake keeps its "server" in
@@ -14,34 +14,47 @@ const useFakeCloud = (page: Page, homeMode?: 'local' | 'account') =>
 const fake = (page: Page) =>
   page.evaluate(() => (window as any).__beadloomCloudFake.dump() as any);
 const modal = (page: Page) => page.locator('.modal').last();
-/** From the designer: Home, then the Gallery or the Journal page. */
+/** Go to the Gallery or Journal page (its address; the header tabs are tested
+ *  in the site-map test). */
 async function openPage(page: Page, name: 'Gallery' | 'Journal') {
-  await page.getByRole('button', { name: 'Home' }).click();
-  await page.locator('.explore-card', { hasText: name }).click();
-  await expect(page).toHaveURL(new RegExp(`#/${name.toLowerCase()}$`));
+  await page.evaluate((p) => (location.hash = `#/${p}`), name.toLowerCase());
+  await expect(page.locator('.page-tabs [aria-current="page"]')).toHaveText(name);
 }
-const backToDesigning = (page: Page) => page.getByRole('button', { name: /Back to designing/ }).click();
+async function backToDesigning(page: Page) {
+  await page.getByRole('button', { name: /^Designer/ }).click();
+  await expect(page.locator('.full-page')).toHaveCount(0);
+}
 
-async function signUp(page: Page, email: string, username: string) {
+/** From the designer: the Account button (signed out) goes to the sign-in page,
+ *  which comes back to the designer; then open the Account dialog. */
+async function authOnPage(page: Page, fill: (card: ReturnType<Page['locator']>) => Promise<void>) {
   await page.getByRole('button', { name: 'Account' }).click();
+  await expect(page).toHaveURL(/#\/signin\?next=/);
+  await fill(page.locator('.signin-card'));
+  await expect(page).toHaveURL(/#\/design$/);
+  await page.getByRole('button', { name: 'Account' }).click();
+}
+async function signUp(page: Page, email: string, username: string) {
+  await authOnPage(page, async (card) => {
+    await card.getByRole('button', { name: 'Create account' }).click();
+    await card.locator('input[type="text"]').fill(username);
+    await card.locator('input[type="email"]').fill(email);
+    await card.locator('.pw-field input').fill('correct-horse');
+    await card.getByRole('button', { name: 'Create account' }).click();
+  });
   const m = modal(page);
-  await m.getByRole('button', { name: 'Create account' }).click();
-  await m.locator('input[type="text"]').fill(username);
-  await m.locator('input[type="email"]').fill(email);
-  await m.locator('input[type="password"]').fill('correct-horse');
-  await m.getByRole('button', { name: 'Create account' }).click();
   await expect(m).toContainText(email);
   await m.getByLabel('Choose a username').fill(username);
   await m.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(m).toContainText(`@${username}`);
 }
 async function signIn(page: Page, email: string) {
-  await page.getByRole('button', { name: 'Account' }).click();
-  const m = modal(page);
-  await m.locator('input[type="email"]').fill(email);
-  await m.locator('input[type="password"]').fill('correct-horse');
-  await m.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(m).toContainText(email);
+  await authOnPage(page, async (card) => {
+    await card.locator('input[type="email"]').fill(email);
+    await card.locator('.pw-field input').fill('correct-horse');
+    await card.getByRole('button', { name: 'Sign in', exact: true }).click();
+  });
+  await expect(modal(page)).toContainText(email);
 }
 async function signOut(page: Page) {
   await page.getByRole('button', { name: 'Account' }).click();
@@ -56,58 +69,68 @@ async function saveAs(page: Page, name: string) {
   await expect.poll(async () => (await snapshot(page)).cloud.status).toBe('synced');
 }
 
-test('without accounts there is no home page; with them it opens at launch until a way is chosen', async ({
+test('site map: no pages without accounts; the welcome for new visitors, sign in, then their home', async ({
   page,
 }) => {
   await page.goto('/');
   await waitForReady(page);
-  await expect(page).toHaveURL(/#\/design$/); // no pages: straight to designing
+  await expect(page).toHaveURL(/#\/design$/); // no accounts: straight to designing
   await expect(page.locator('.home')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Home' })).toHaveCount(0);
   await expect(page.locator('.topbar .brand')).toHaveText('Chromattice');
 
+  // a new visitor: the welcome
   await useFakeCloud(page);
   await page.goto('/');
-  const home = page.locator('.home');
-  await expect(home).toBeVisible();
-  await expect(page).toHaveURL(/#\/$/);
-  await expect(home).toContainText('On this device only');
-  await expect(home).toContainText('With an account');
-  // keys don't reach the editor behind it
-  await page.keyboard.press('e');
+  await expect(page).toHaveURL(/#\/welcome$/);
+  const welcome = page.locator('.home');
+  await expect(welcome).toContainText('On this device only');
+  await expect(welcome).toContainText('With an account');
+  await page.keyboard.press('e'); // keys don't reach the editor behind it
   expect((await snapshot(page)).tool).not.toBe('eraser');
-
-  // the Gallery and Journal are pages of their own, with their own addresses
-  await home.locator('.explore-card', { hasText: 'Gallery' }).click();
+  await welcome.locator('.explore-card', { hasText: 'Gallery' }).click();
   await expect(page).toHaveURL(/#\/gallery$/);
   await expect(page.locator('.full-page')).toContainText('Nothing published yet');
   await page.locator('.page-tabs').getByRole('button', { name: 'Journal' }).click();
   await expect(page).toHaveURL(/#\/journal$/);
   await page.goBack();
   await expect(page).toHaveURL(/#\/gallery$/);
-  await page.locator('.page-brand').click();
-  await expect(page).toHaveURL(/#\/$/);
+  await page.locator('.page-brand').click(); // the start page: still the welcome
+  await expect(page).toHaveURL(/#\/welcome$/);
 
+  // this device only: their home, with a way to sign in
   await page.getByRole('button', { name: 'Use on this device' }).click();
-  await expect(page.locator('.home')).toHaveCount(0);
-  await expect(page).toHaveURL(/#\/design$/);
-
-  // from then on the app opens on the user's own home, the design one tap away
-  await page.goto('/');
-  await expect(page).toHaveURL(/#\/$/);
+  await expect(page).toHaveURL(/#\/home$/);
   await expect(page.locator('.continue-card')).toContainText('Untitled Pattern');
-  await expect(page.locator('.home-mode.current')).toContainText('On this device only'); // at the bottom now
-  await expect(page.locator('.home-section', { hasText: 'Activity' })).toHaveCount(0); // no account: no social
+  await expect(page.locator('.home-modes')).toHaveCount(0); // the choice is the welcome's alone
+  await expect(page.locator('.home-callout')).toContainText("You're working on this device only");
   await page.locator('.continue-card').click();
   await expect(page).toHaveURL(/#\/design$/);
   await waitForReady(page);
-
-  // the Home button, top left, goes back
+  // not signed in, the start page is the welcome again, remembering the choice
   await page.getByRole('button', { name: 'Home' }).click();
-  await expect(page).toHaveURL(/#\/$/);
+  await expect(page).toHaveURL(/#\/welcome$/);
+  await expect(page.locator('.home-mode.current')).toContainText('On this device only');
+
+  // the account card goes to the sign-in page, and signing up lands at home
+  await page.getByRole('button', { name: 'Sign in or create an account' }).click();
+  await expect(page).toHaveURL(/#\/signin\?next=/);
+  const card = page.locator('.signin-card');
+  await card.getByRole('button', { name: 'Create account' }).click();
+  await card.locator('input[type="text"]').fill('Ann');
+  await card.locator('input[type="email"]').fill('ann@example.com');
+  await card.locator('.pw-field input').fill('correct-horse');
+  await card.getByRole('button', { name: 'Create account' }).click();
+  await expect(page).toHaveURL(/#\/home$/);
+  await expect(page.locator('.page-title')).toHaveText('Welcome back');
+  await expect(page.getByRole('button', { name: 'Signed in as ann@example.com' })).toBeVisible();
+  // signed in, the start page is home
+  await backToDesigning(page);
+  await page.getByRole('button', { name: 'Home' }).click();
+  await expect(page).toHaveURL(/#\/home$/);
 
   // or, in Settings, straight back to the design
-  await page.locator('.continue-card').click();
+  await backToDesigning(page);
   await openFileMenu(page, /Settings/);
   await modal(page).getByRole('radio', { name: /straight back to my last design/ }).check();
   await modal(page).getByRole('button', { name: 'Done' }).click();
@@ -146,7 +169,7 @@ test('friends: find by username, request, accept; share with a friend and with a
 
   await openFileMenu(page, /⊟ Open/);
   await browserItem(page, 'Starburst').click();
-  await modal(page).getByRole('button', { name: 'Share…' }).click();
+  await fileAction(modal(page), 'Share…');
   m = modal(page);
   await expect(m.locator('h2')).toHaveText('Share “Starburst”');
   await m.getByRole('checkbox', { name: /Anyone/ }).check();
@@ -208,7 +231,7 @@ test('a saved design becomes the profile picture, shown to friends', async ({ pa
 
   await openFileMenu(page, /⊟ Open/);
   await browserItem(page, 'Face').click();
-  await modal(page).getByRole('button', { name: 'Use as profile picture' }).click();
+  await fileAction(modal(page), 'Use as profile picture');
   await expect(page.locator('.notice')).toHaveText('“Face” is your profile picture');
   const server = await fake(page);
   expect(server.profiles[0].avatar).toMatch(/^data:image\/png;base64,/);
@@ -229,11 +252,13 @@ test('Share is for Cloud Storage only; another account never sees the last one�
 
   await openFileMenu(page, /⊟ Open/);
   await browserItem(page, 'Dans Cloud').click();
-  await expect(modal(page).getByRole('button', { name: 'Share…' })).toBeEnabled();
+  await expect(await fileActionItem(modal(page), 'Share…')).toBeEnabled();
+  await modal(page).getByRole('button', { name: 'More actions' }).click();
   await modal(page).getByLabel('Move to folder').selectOption({ label: 'Local Storage' });
   await modal(page).locator('.fb-side-item', { hasText: 'Local Storage' }).click();
   await browserItem(page, 'Dans Cloud').click();
-  await expect(modal(page).getByRole('button', { name: 'Share…' })).toBeDisabled();
+  await expect(await fileActionItem(modal(page), 'Share…')).toBeDisabled();
+  await modal(page).getByRole('button', { name: 'More actions' }).click();
   await modal(page).getByLabel('Move to folder').selectOption({ label: 'Cloud Storage' });
   await expect.poll(async () => (await fake(page)).items.filter((i: any) => !i.deleted_at).length).toBe(1);
   await page.keyboard.press('Escape');
@@ -257,7 +282,7 @@ async function annPublishes(page: Page) {
   await saveAs(page, 'Mesa');
   await openFileMenu(page, /⊟ Open/);
   await browserItem(page, 'Mesa').click();
-  await modal(page).getByRole('button', { name: 'Share…' }).click();
+  await fileAction(modal(page), 'Share…');
   await modal(page).getByRole('checkbox', { name: /Anyone/ }).check();
   await modal(page).getByRole('button', { name: 'Save' }).click();
   await page.keyboard.press('Escape');
@@ -274,7 +299,7 @@ test('like, rate and comment on a gallery design; links in comments get preview 
   await signUp(page, 'bob@example.com', 'bob');
   await modal(page).getByRole('button', { name: 'Done' }).click();
   await openPage(page, 'Gallery');
-  await expect(page.locator('.home-title h1')).toHaveText('Chromattice');
+  await expect(page.locator('.page-brand > span')).toHaveText('Chromattice');
   await page.locator('.gallery-card', { hasText: 'Mesa' }).click();
   const m = modal(page);
   await m.getByRole('button', { name: 'Like' }).click();
@@ -416,7 +441,7 @@ test('journal: write about a design for friends, then for anyone; drafts stay pr
   await saveAs(page, 'Butte');
   await openFileMenu(page, /⊟ Open/);
   await browserItem(page, 'Butte').click();
-  await modal(page).getByRole('button', { name: 'Write about this…' }).click();
+  await fileAction(modal(page), 'Write about this…');
   let m = modal(page);
   await expect(m.locator('.post-pick.on')).toContainText('Butte');
   await m.getByLabel('Title').fill('How Butte came together');
@@ -555,7 +580,7 @@ test('the personal home: designs from both stores, activity to act on, friends�
   await openFileMenu(page, /⊟ Open/);
   await modal(page).locator('.fb-side-item', { hasText: 'Cloud Storage' }).click();
   await browserItem(page, 'Bobs Gift').click();
-  await modal(page).getByRole('button', { name: 'Share…' }).click();
+  await fileAction(modal(page), 'Share…');
   await modal(page).getByRole('checkbox', { name: '@ann' }).check();
   await modal(page).getByRole('button', { name: 'Save' }).click();
   await page.keyboard.press('Escape');
@@ -572,4 +597,110 @@ test('the personal home: designs from both stores, activity to act on, friends�
   await modal(page).getByRole('button', { name: 'Close' }).click();
   await page.locator('.page-brand').click();
   await expect(home.locator('.activity-item', { hasText: 'Shared with you' })).toContainText('@bob shared “Bobs Gift”');
+});
+
+test('your designs: all of them, by folder, with search, filters and folders that fold', async ({ page }) => {
+  await useFakeCloud(page, 'local');
+  await page.goto('/#/design');
+  await waitForReady(page);
+  // five designs in three places, one on a square grid
+  await page.evaluate(() => {
+    const s = (window as any).__beadloom.getState();
+    const save = (name: string, folder: string) => (window as any).__beadloom.getState().saveToSlot(name, folder);
+    save('Loose One', 'Local Storage');
+    save('Belt Blue', 'Local Storage/Gifts');
+    save('Belt Red', 'Local Storage/Gifts');
+    save('Rug Draft', 'Local Storage/Rugs');
+    s.setCellAspect(1);
+    save('Square Tile', 'Local Storage/Rugs');
+  });
+  await page.goto('/#/home');
+  const mine = page.locator('.home-section', { hasText: 'Your designs' });
+  await expect(mine.locator('.design-count')).toHaveText('5 designs');
+  const folder = (label: string) => mine.locator('.design-folder', { has: page.locator('.design-folder-head', { hasText: label }) });
+  await expect(folder('Local Storage › Gifts').locator('.design-tile')).toHaveCount(2);
+  await expect(folder('Local Storage › Rugs').locator('.design-tile')).toHaveCount(2);
+  await expect(folder('Local Storage › Gifts').locator('.design-folder-head')).toContainText('2');
+
+  // search: flat, each result says where it lives
+  await mine.getByLabel('Find a design').fill('belt');
+  await expect(mine.locator('.design-folder')).toHaveCount(0);
+  await expect(mine.locator('.design-tile')).toHaveCount(2);
+  await expect(mine.locator('.design-tile', { hasText: 'Belt Red' })).toContainText('Local Storage › Gifts');
+  await expect(mine.locator('.design-count')).toHaveText('2 of 5 designs');
+  await mine.getByLabel('Find a design').fill('');
+
+  // the grid-type filter
+  await mine.getByLabel('Grid type').selectOption('Square');
+  await expect(mine.locator('.design-tile')).toHaveCount(1);
+  await expect(mine.locator('.design-tile')).toContainText('Square Tile');
+  await mine.getByLabel('Grid type').selectOption('');
+
+  // folding a folder, remembered
+  await folder('Local Storage › Gifts').locator('.design-folder-head').click();
+  await expect(folder('Local Storage › Gifts').locator('.design-tile')).toHaveCount(0);
+  await page.reload();
+  await expect(folder('Local Storage › Gifts').locator('.design-folder-head')).toHaveAttribute('aria-expanded', 'false');
+  await expect(folder('Local Storage › Rugs').locator('.design-tile')).toHaveCount(2);
+
+  // and a tile opens its design
+  await folder('Local Storage › Rugs').locator('.design-tile', { hasText: 'Rug Draft' }).click();
+  await expect(page).toHaveURL(/#\/design$/);
+  expect((await snapshot(page)).slotPath).toBe('Local Storage/Rugs/Rug Draft');
+});
+
+test('the designer connects: a way to every page, where it’s saved, and Share for the open design', async ({ page }) => {
+  await useFakeCloud(page, 'account');
+  await page.goto('/#/design');
+  await waitForReady(page);
+  const status = page.locator('.save-status');
+
+  // the Go to menu, beside the mark
+  await page.getByRole('button', { name: 'Go to' }).click();
+  await page.locator('.menu-pop .menu-item', { hasText: 'Gallery' }).click();
+  await expect(page).toHaveURL(/#\/gallery$/);
+  await backToDesigning(page);
+  await page.getByRole('button', { name: 'Go to' }).click();
+  await page.locator('.menu-pop .menu-item', { hasText: 'Journal' }).click();
+  await expect(page).toHaveURL(/#\/journal$/);
+  await backToDesigning(page);
+
+  // save status: nothing yet → a save → a change → tap to save
+  await expect(status).toContainText('Not saved yet');
+  await openFileMenu(page, /Save As/);
+  await modal(page).locator('#fb-save-name').fill('Stripe');
+  await modal(page).getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(status).toContainText('Saved · Local');
+  await pickTool(page, 'Pen');
+  await tapCell(page, 1, 1);
+  await expect(status).toContainText('Unsaved changes');
+  await status.click();
+  await expect(status).toContainText('Saved · Local');
+
+  // Share, signed out: sign in first (and come back)
+  await page.getByRole('button', { name: 'Share this design' }).click();
+  await expect(page).toHaveURL(/#\/signin\?next=/);
+  await page.goBack();
+
+  // signed in: a local design is moved to Cloud Storage, then shared
+  await signUp(page, 'sam@example.com', 'sam');
+  await modal(page).getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('button', { name: 'Share this design' }).click();
+  await expect(modal(page)).toContainText('It’s in Local Storage, on this device only.');
+  await modal(page).getByRole('button', { name: 'Move to Cloud Storage and share' }).click();
+  await expect(modal(page).locator('h2')).toHaveText('Share “Stripe”');
+  await expect(modal(page).getByRole('checkbox', { name: /Anyone/ })).toBeVisible();
+  expect((await snapshot(page)).slotPath).toBe('Cloud Storage/Stripe');
+  await expect(status).toContainText('Saved · Cloud');
+  await modal(page).getByRole('button', { name: 'Cancel' }).click();
+
+  // a new, unsaved design is saved there first — beside, not over, one of the same name
+  await openFileMenu(page, /New/);
+  await modal(page).locator('input[type="text"]').fill('Stripe');
+  await modal(page).getByRole('button', { name: 'Create' }).click();
+  await waitForReady(page);
+  await page.getByRole('button', { name: 'Share this design' }).click();
+  await modal(page).getByRole('button', { name: 'Save to Cloud Storage and share' }).click();
+  await expect(modal(page).locator('h2')).toHaveText('Share “Stripe 2”');
+  await expect.poll(async () => (await fake(page)).items.map((i: any) => i.path).sort()).toEqual(['Stripe', 'Stripe 2']);
 });

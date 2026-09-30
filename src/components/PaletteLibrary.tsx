@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { syncOnLook } from '../lib/cloud';
 import { useStore } from '../store/useStore';
 import Modal from './Modal';
 import FileBrowser, { type VirtualLocation } from './FileBrowser';
@@ -19,6 +20,7 @@ import { paletteLibrary } from '../lib/stores';
  * location you can apply from or copy out of.
  */
 export default function PaletteLibrary({ onClose }: { onClose: () => void }) {
+  useEffect(syncOnLook, []);
   const palette = useStore((s) => s.design.palette);
   const paletteSlotPath = useStore((s) => s.paletteSlotPath);
   const applyPalette = useStore((s) => s.applyPalette);

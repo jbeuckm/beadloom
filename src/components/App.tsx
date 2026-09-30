@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import TopBar, { type DialogId } from './TopBar';
 import Toolbar from './Toolbar';
 import LoomCanvas from './LoomCanvas';
@@ -7,13 +7,13 @@ import StatusBar from './StatusBar';
 import Dialogs from './Dialogs';
 import RightDock from './RightDock';
 import PrintView from './PrintView';
-import Home, { GalleryPage, JournalPage, homeAtLaunch, readLaunchTo, type HomePage } from './Home';
+import { AdminPage, GalleryPage, HomePage, JournalPage, PagesContext, SignInPage, WelcomePage, startPath } from './Home';
 import { useLocation, useNavigate } from 'react-router';
 import { linkTarget } from './Comments';
 import { cloud } from '../lib/cloud';
 import { useStore } from '../store/useStore';
 import * as storage from '../lib/storage';
-import { clearAuthUrl, resetTokenFromUrl } from '../lib/cloud';
+import { resetTokenFromUrl } from '../lib/cloud';
 
 /** A brief status message ("Copied 12 beads", "Nothing to paste…"). */
 function Notice() {
@@ -33,33 +33,27 @@ function Notice() {
 }
 
 export default function App() {
-  // a password-reset link lands here with a token in the URL
-  const [resetToken] = useState<string | null>(() => resetTokenFromUrl());
-  const [dialog, setDialog] = useState<DialogId | null>(() => (resetTokenFromUrl() ? 'account' : null));
-  // Pages are routes (main.tsx has the router): #/ Home, #/design the
-  // designer, #/gallery(/<design id>), #/journal(/<post id>). Without
-  // accounts there are no pages; everything is the designer.
+  const [dialog, setDialog] = useState<DialogId | null>(null);
+  // Pages are routes (main.tsx has the router; Home.tsx the site map). They
+  // sit over the designer, which is always there. Without accounts there
+  // are no pages; everything is the designer.
   const location = useLocation();
   const navigate = useNavigate();
+  const user = useStore((s) => s.cloudUser);
+  const ready = useStore((s) => s.cloudReady);
   const [, section, itemId] = location.pathname.split('/');
-  const page: HomePage | null = !cloud.available
-    ? null
-    : section === 'gallery'
-      ? 'gallery'
-      : section === 'journal'
-        ? 'journal'
-        : section === '' || section === undefined
-          ? 'home'
-          : null;
-  // the app opens on Home (a welcome the first time, then the user's own
-  // home), unless they'd rather go straight back to their design (Settings)
+  const page = cloud.available && ['welcome', 'home', 'signin', 'gallery', 'journal', 'admin'].includes(section) ? section : null;
+
+  // a password-reset link: to the sign-in page, which asks for the new password
   useEffect(() => {
-    const toDesign = !cloud.available || !!resetToken || (!homeAtLaunch() && readLaunchTo() === 'design');
-    if (location.pathname === '/' && toDesign)
-      navigate({ pathname: '/design', search: location.search }, { replace: true });
+    if (resetTokenFromUrl() && section !== 'signin') navigate({ pathname: '/signin', search: location.search }, { replace: true });
     // only at launch
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // #/ is the start page: once we know whether they're signed in
+  useEffect(() => {
+    if (location.pathname === '/' && ready) navigate(startPath(!!user), { replace: true });
+  }, [location.pathname, ready, user, navigate]);
   // links in the form shared before routing (#design=<id>, #post=<id>) can
   // still be clicked inside the app, which changes only the hash
   useEffect(() => {
@@ -73,9 +67,15 @@ export default function App() {
     return () => window.removeEventListener('hashchange', fix);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const go = (p: HomePage) => navigate(p === 'home' ? '/' : `/${p}`);
-  const closePages = () => navigate('/design');
-  const openDialog = (d: DialogId) => (d === 'home' ? go('home') : setDialog(d));
+  // the designer's Home mark goes to the start page; its Account button,
+  // signed out, to the sign-in page (and back here after)
+  const openDialog = (d: DialogId) => {
+    if (d === 'home') navigate('/');
+    else if ((d === 'account' || d === 'share') && !useStore.getState().cloudUser)
+      navigate(`/signin?next=${encodeURIComponent(location.pathname)}`);
+    else setDialog(d);
+  };
+  const pagesContext = useMemo(() => ({ openDialog }), [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const rightPanel = useStore((s) => s.rightPanel);
   const showPrint = useStore((s) => s.showPrint);
 
@@ -234,50 +234,16 @@ export default function App() {
       <PalettePanel />
       <StatusBar />
       {dialog && (
-        <Dialogs
-          which={dialog}
-          resetToken={resetToken}
-          onSwitch={setDialog}
-          onClose={() => {
-            if (resetToken) clearAuthUrl();
-            setDialog(null);
-          }}
-        />
+        <Dialogs which={dialog} onSwitch={setDialog} onClose={() => setDialog(null)} />
       )}
-      {page === 'home' && (
-        <Home
-          onClose={closePages}
-          onGo={go}
-          onSignIn={() => setDialog('account')}
-          onOpenItem={(kind, id) => navigate(kind === 'design' ? `/gallery/${id}` : `/journal/${id}`)}
-          onNewDesign={() => {
-            if (useStore.getState().dirty && !confirm('Discard unsaved changes and start a new design?')) return;
-            closePages();
-            setDialog('new');
-          }}
-          onOpenFiles={() => {
-            closePages();
-            setDialog('open');
-          }}
-        />
-      )}
-      {page === 'gallery' && (
-        <GalleryPage
-          openId={itemId ?? null}
-          onOpen={(id) => navigate(id ? `/gallery/${id}` : '/gallery')}
-          onGo={go}
-          onClose={closePages}
-        />
-      )}
-      {page === 'journal' && (
-        <JournalPage
-          openId={itemId ?? null}
-          onOpen={(id) => navigate(id ? `/journal/${id}` : '/journal')}
-          onGo={go}
-          onClose={closePages}
-          onOpenDesign={(id) => navigate(`/gallery/${id}`)}
-        />
-      )}
+      <PagesContext.Provider value={pagesContext}>
+        {page === 'welcome' && <WelcomePage />}
+        {page === 'signin' && <SignInPage />}
+        {page === 'home' && <HomePage />}
+        {page === 'gallery' && <GalleryPage openId={itemId ?? null} />}
+        {page === 'journal' && <JournalPage openId={itemId ?? null} />}
+        {page === 'admin' && <AdminPage />}
+      </PagesContext.Provider>
       <Notice />
       {showPrint && <PrintView />}
     </div>

@@ -49,16 +49,22 @@ export function MenuItem({
   onClick,
   close,
   danger,
+  disabled,
+  title,
   children,
 }: {
   onClick: () => void;
   close: () => void;
   danger?: boolean;
+  disabled?: boolean;
+  title?: string;
   children: ReactNode;
 }) {
   return (
     <button
       className={'menu-item' + (danger ? ' danger' : '')}
+      disabled={disabled}
+      title={title}
       onClick={() => {
         onClick();
         close();

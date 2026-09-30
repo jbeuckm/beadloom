@@ -1,94 +1,35 @@
-// Accounts: sign in, sign up, forgot / reset password, and — once signed in —
-// the sync status, username and friends, sign out.
+// The signed-in account: sync status, username and friends, notifications,
+// sign out. (Signing in is a page of its own: SignInPage, with AuthForm.)
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import Modal from './Modal';
 import Friends from './Friends';
+import { SuspendedNotice } from './Home';
 import { Icon } from './icons';
-import { cloud, clearAuthUrl, resetRedirectUrl } from '../lib/cloud';
+import { cloud, refreshStanding } from '../lib/cloud';
 import { cloudStatusText } from '../lib/cloud/status';
 
 type Mode = 'signin' | 'signup' | 'forgot' | 'reset' | 'account';
 
 export default function AccountDialog({
   onClose,
-  resetToken,
   onSettings,
 }: {
   onClose: () => void;
-  resetToken: string | null;
   onSettings?: () => void;
 }) {
   const user = useStore((s) => s.cloudUser);
   const info = useStore((s) => s.cloudInfo);
-  const notify = useStore((s) => s.notify);
   const backend = cloud.backend;
   const engine = cloud.engine;
 
-  const [mode, setMode] = useState<Mode>(resetToken ? 'reset' : user ? 'account' : 'signin');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [name, setName] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
-
-  // arriving signed in (or a sign-in landing): show the account
+  useEffect(refreshStanding, []); // a moderator may have changed it since sign-in
+  // signed out (from here, or elsewhere): nothing to show
   useEffect(() => {
-    if (!user || mode === 'reset') return;
-    setMode('account');
-  }, [user, mode]);
-
-  if (!backend || !engine) return null;
-
-  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done?: () => void) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await fn();
-      if (!r.ok) setError(r.error ?? 'Something went wrong');
-      else done?.();
-    } catch (e) {
-      setError((e as Error).message || 'Something went wrong');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (mode === 'signin') void run(() => backend.signIn(email.trim(), password));
-    else if (mode === 'signup')
-      void run(() => backend.signUp(email.trim(), password, name.trim() || email.split('@')[0]));
-    else if (mode === 'forgot')
-      void run(
-        () => backend.requestPasswordReset(email.trim(), resetRedirectUrl()),
-        () => setSent(true),
-      );
-    else if (mode === 'reset' && resetToken)
-      void run(
-        () => backend.resetPassword(resetToken, password),
-        () => {
-          clearAuthUrl();
-          notify('Password changed — sign in with your new password');
-          setPassword('');
-          setMode('signin');
-        },
-      );
-  };
-
-  const title =
-    mode === 'account'
-      ? 'Account'
-      : mode === 'signup'
-        ? 'Create account'
-        : mode === 'forgot'
-          ? 'Reset password'
-          : mode === 'reset'
-            ? 'Choose a new password'
-            : 'Sign in';
+    if (!user) onClose();
+  }, [user, onClose]);
+  if (!backend || !engine || !user) return null;
 
   const statusLine =
     cloudStatusText(info) +
@@ -97,9 +38,8 @@ export default function AccountDialog({
       : '');
 
   return (
-    <Modal title={title} onClose={onClose}>
-      {mode === 'account' && user ? (
-        <div className="acct">
+    <Modal title="Account" onClose={onClose}>
+      <div className="acct">
           <p className="acct-who">
             <Icon name="user" size={18} /> <b>{user.email}</b>
           </p>
@@ -113,11 +53,15 @@ export default function AccountDialog({
             <b>Local Storage</b> stay on this device. Move a file between them in Open or the Palette
             Library.
           </p>
+          <SuspendedNotice />
           <Friends />
           <div className="actions spread">
-            <button className="btn" onClick={() => void engine.flush()} disabled={info.status === 'syncing'}>
-              Sync now
-            </button>
+            {/* syncing is automatic; a manual push is only for when it's stuck */}
+            {info.status !== 'syncing' && (info.status === 'offline' || info.status === 'error' || info.pending > 0) && (
+              <button className="btn" onClick={() => void engine.flush()}>
+                Try again
+              </button>
+            )}
             {onSettings && (
               <button className="btn ghost" onClick={onSettings}>
                 Notifications…
@@ -138,110 +82,6 @@ export default function AccountDialog({
             </button>
           </div>
         </div>
-      ) : (
-        <form className="acct" onSubmit={submit}>
-          {mode === 'signin' && (
-            <p className="hint">
-              Sign in to keep your designs and palettes in your account and use them on every device.
-              Without an account everything stays on this device.
-            </p>
-          )}
-          {mode === 'forgot' && sent ? (
-            <p className="hint">
-              If an account exists for <b>{email}</b>, a reset link is on its way. The link works for
-              15 minutes.
-            </p>
-          ) : (
-            <>
-              {mode === 'signup' && (
-                <div className="field">
-                  <label>Name</label>
-                  <input type="text" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
-                </div>
-              )}
-              {mode !== 'reset' && (
-                <div className="field">
-                  <label>Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    autoComplete="email"
-                    autoFocus
-                    required
-                  />
-                </div>
-              )}
-              {mode !== 'forgot' && (
-                <div className="field">
-                  <label>{mode === 'reset' ? 'New password' : 'Password'}</label>
-                  <div className="pw-field">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      minLength={mode === 'signin' ? undefined : 8}
-                      required
-                    />
-                    {/* see what was typed, or what the browser filled in */}
-                    <button
-                      type="button"
-                      className="pw-eye"
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
-                      aria-pressed={showPassword}
-                      onClick={() => setShowPassword((v) => !v)}
-                    >
-                      <Icon name={showPassword ? 'eye-off' : 'eye'} size={18} />
-                    </button>
-                  </div>
-                  {mode !== 'signin' && <span className="hint">At least 8 characters</span>}
-                </div>
-              )}
-              {error && (
-                <p className="acct-error" role="alert">
-                  {error}
-                </p>
-              )}
-            </>
-          )}
-          <div className="actions spread">
-            {mode === 'signin' && (
-              <>
-                <button type="button" className="btn ghost" onClick={() => setMode('forgot')}>
-                  Forgot password?
-                </button>
-                <button type="button" className="btn ghost" onClick={() => setMode('signup')}>
-                  Create account
-                </button>
-              </>
-            )}
-            {(mode === 'signup' || mode === 'forgot' || mode === 'reset') && (
-              <button type="button" className="btn ghost" onClick={() => setMode('signin')}>
-                Back to sign in
-              </button>
-            )}
-            <span className="grow" />
-            <button type="button" className="btn" onClick={onClose}>
-              Cancel
-            </button>
-            {!(mode === 'forgot' && sent) && (
-              <button type="submit" className="btn primary" disabled={busy}>
-                {mode === 'signin'
-                  ? 'Sign in'
-                  : mode === 'signup'
-                    ? 'Create account'
-                    : mode === 'forgot'
-                      ? 'Send reset link'
-                      : 'Change password'}
-              </button>
-            )}
-          </div>
-        </form>
-      )}
     </Modal>
   );
 }

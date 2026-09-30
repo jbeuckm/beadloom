@@ -15,7 +15,9 @@
     "test:screens": "playwright test screenshots",
     "test:report": "playwright show-report",
     "db:migrate": "node scripts/migrate.mjs",
-    "neon:setup": "node scripts/neon-setup.mjs"
+    "neon:setup": "node scripts/neon-setup.mjs",
+    "favicon": "node scripts/make-favicon.mjs",
+    "set-role": "node scripts/set-role.mjs"
   },
   "dependencies": {
     "@fontsource/josefin-sans": "^5.3.0",

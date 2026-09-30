@@ -16,13 +16,15 @@ import type {
   Post,
   Profile,
   Reactions,
+  ReportKind,
   SharedItem,
+  StaffRole,
   TrashOriginRow,
 } from './backend';
 import { NO_REACTIONS, USERNAME_RE } from './backend';
 
 const ITEM_COLUMNS = 'id,collection,path,doc,modified,deleted_at';
-const POST_COLUMNS = 'id,author_id,title,body,visibility,design_ids,created_at,updated_at,published_at';
+const POST_COLUMNS = 'id,author_id,title,body,visibility,design_ids,created_at,updated_at,published_at,hidden_reason';
 type PostRow = {
   id: string;
   author_id: string;
@@ -33,6 +35,7 @@ type PostRow = {
   created_at: string;
   updated_at: string;
   published_at: string | null;
+  hidden_reason: string | null;
 };
 const PROFILE_COLUMNS = 'user_id,username,avatar';
 type ProfileRow = { user_id: string; username: string; avatar: string | null };
@@ -286,13 +289,14 @@ export function createNeonBackend(authUrl: string, dataApiUrl: string): CloudBac
     },
     async sharing(itemId) {
       const [item, shares] = await Promise.all([
-        client.from('library_items').select('published').eq('id', itemId).maybeSingle(),
+        client.from('library_items').select('published,hidden_reason').eq('id', itemId).maybeSingle(),
         client.from('shares').select('grantee_id').eq('item_id', itemId),
       ]);
       check(item, 'Loading sharing');
       check(shares, 'Loading sharing');
       return {
         published: !!(item.data as { published?: boolean } | null)?.published,
+        hiddenReason: (item.data as { hidden_reason?: string | null } | null)?.hidden_reason ?? null,
         friendIds: ((shares.data ?? []) as Array<{ grantee_id: string }>).map((x) => x.grantee_id),
       };
     },
@@ -460,6 +464,119 @@ export function createNeonBackend(authUrl: string, dataApiUrl: string): CloudBac
     async deletePost(postId) {
       check(await client.from('posts').delete().eq('id', postId), 'Deleting the post');
     },
+
+    // ---- standing, reports, moderation -------------------------------------------
+    async standing() {
+      const r = await client.rpc('my_standing');
+      check(r, 'Loading your account');
+      const row = ((r.data ?? []) as Array<{ role: string; suspended_reason: string | null }>)[0];
+      const role = row?.role === 'admin' || row?.role === 'moderator' ? row.role : 'user';
+      return { role, suspendedReason: row?.suspended_reason ?? null };
+    },
+    async report(kind, targetId, reason) {
+      const text = reason.trim();
+      if (!text) return { ok: false, error: 'Say what’s wrong' };
+      const r = await client.from('reports').insert({ kind, target_id: targetId, reason: text.slice(0, 1000) });
+      if (r.error?.code === '42501') return { ok: false, error: 'Your account can’t file reports right now' };
+      return result(r, 'Could not send the report');
+    },
+    async staffQueue() {
+      const r = await client.rpc('staff_queue');
+      check(r, 'Loading reports');
+      type Row = {
+        kind: ReportKind; target_id: string; reports: number; reasons: string[]; first_at: string; title: string;
+        owner_id: string | null; owner_name: string | null; doc: unknown; body: string | null; hidden: boolean;
+      };
+      return ((r.data ?? []) as Row[]).map((x) => ({
+        kind: x.kind,
+        targetId: x.target_id,
+        reports: x.reports,
+        reasons: x.reasons ?? [],
+        firstAt: x.first_at,
+        title: x.title,
+        ownerId: x.owner_id,
+        ownerName: x.owner_name,
+        doc: x.doc ?? null,
+        body: x.body,
+        hidden: x.hidden,
+      }));
+    },
+    async staffContent(what) {
+      const r = await client.rpc('staff_content', { what });
+      check(r, 'Loading content');
+      type Row = {
+        id: string; title: string; owner_id: string; owner_name: string | null; doc: unknown; body: string | null;
+        at: string | null; hidden_reason: string | null; hidden: boolean;
+      };
+      return ((r.data ?? []) as Row[]).map((x) => ({
+        id: x.id,
+        title: x.title,
+        ownerId: x.owner_id,
+        ownerName: x.owner_name,
+        doc: x.doc ?? null,
+        body: x.body,
+        at: x.at,
+        hidden: x.hidden,
+        hiddenReason: x.hidden_reason,
+      }));
+    },
+    async staffSetHidden(what, id, hide, reason) {
+      check(await client.rpc('staff_set_hidden', { what, target: id, hide, why: reason }), hide ? 'Hiding' : 'Restoring');
+    },
+    async staffDeleteComment(id, reason) {
+      check(await client.rpc('staff_delete_comment', { target: id, why: reason }), 'Deleting the comment');
+    },
+    async staffDismiss(kind, id, reason) {
+      check(await client.rpc('staff_dismiss', { what: kind, target: id, why: reason }), 'Dismissing');
+    },
+    async staffUsers(query) {
+      const r = await client.rpc('staff_users', { q: query });
+      check(r, 'Loading people');
+      type Row = {
+        id: string; email: string; name: string; username: string | null; role: string; banned: boolean;
+        suspended_reason: string | null; created_at: string; designs: number; published: number;
+      };
+      return ((r.data ?? []) as Row[]).map((x) => ({
+        id: x.id,
+        email: x.email,
+        name: x.name,
+        username: x.username,
+        role: (x.role === 'admin' || x.role === 'moderator' ? x.role : 'user') as StaffRole,
+        banned: x.banned,
+        suspendedReason: x.suspended_reason,
+        createdAt: x.created_at,
+        designs: x.designs,
+        published: x.published,
+      }));
+    },
+    async staffSuspend(userId, reason) {
+      check(await client.rpc('staff_suspend', { target: userId, why: reason }), 'Suspending');
+    },
+    async staffUnsuspend(userId) {
+      check(await client.rpc('staff_unsuspend', { target: userId }), 'Lifting the suspension');
+    },
+    async adminSetRole(userId, role) {
+      check(await client.rpc('admin_set_role', { target: userId, new_role: role }), 'Changing the role');
+    },
+    async adminBan(userId, reason) {
+      check(await client.rpc('admin_ban', { target: userId, why: reason }), 'Banning');
+    },
+    async adminUnban(userId) {
+      check(await client.rpc('admin_unban', { target: userId }), 'Lifting the ban');
+    },
+    async staffLog(limit) {
+      const r = await client.rpc('staff_log', { n: limit });
+      check(r, 'Loading the log');
+      type Row = { at: string; actor: string; action: string; target_kind: string; target_id: string; reason: string | null };
+      return ((r.data ?? []) as Row[]).map((x) => ({
+        at: x.at,
+        actor: x.actor,
+        action: x.action,
+        targetKind: x.target_kind,
+        targetId: x.target_id,
+        reason: x.reason,
+      }));
+    },
   };
 
   return backend;
@@ -477,6 +594,7 @@ export function createNeonBackend(authUrl: string, dataApiUrl: string): CloudBac
       createdAt: x.created_at,
       updatedAt: x.updated_at,
       publishedAt: x.published_at,
+      hiddenReason: x.hidden_reason,
     }));
   }
 }

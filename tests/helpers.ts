@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 /** Mirrors PX_PER_COL / cellAspect in the app. */
 export const PX_PER_COL = 26;
@@ -264,4 +264,15 @@ export async function applyPresetPalette(
   await browserItem(page, label).click();
   await page.locator('.modal').getByRole('button', { name: 'Apply', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.modal-backdrop'));
+}
+
+/** A file-browser action kept under More (Share…, Write about this…). */
+export async function fileAction(browser: Locator, name: string): Promise<void> {
+  await browser.getByRole('button', { name: 'More actions' }).click();
+  await browser.locator('.menu-pop .menu-item', { hasText: name }).click();
+}
+/** Open More and return the item, for checking it (click More again to close). */
+export async function fileActionItem(browser: Locator, name: string): Promise<Locator> {
+  await browser.getByRole('button', { name: 'More actions' }).click();
+  return browser.locator('.menu-pop .menu-item', { hasText: name });
 }

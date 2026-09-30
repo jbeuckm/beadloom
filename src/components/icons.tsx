@@ -70,7 +70,8 @@ export type IconName =
   | 'device'
   | 'heart'
   | 'comment'
-  | 'link';
+  | 'link'
+  | 'flag';
 
 const DOT = { fill: 'currentColor', stroke: 'none' } as const;
 
@@ -316,6 +317,12 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <circle cx="9" cy="9" r="2" />
       <path d="m21 15-4.5-4.5L5 22" />
+    </>
+  ),
+  flag: (
+    <>
+      <path d="M5 21V4" />
+      <path d="M5 4h12l-2 4 2 4H5" />
     </>
   ),
   comment: <path d="M4 5h16v11H9l-5 4V5Z" />,

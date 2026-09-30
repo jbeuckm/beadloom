@@ -3164,3 +3164,324 @@ button.activity-item:disabled {
   background: #fdf0d5;
   border: 1px solid var(--sw-ochre);
 }
+
+/* ---------- the site header's account, sign in, page titles ---------- */
+.page-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap);
+  padding: 0 12px;
+  border: 1px solid rgba(251, 243, 230, 0.6);
+  background: rgba(91, 45, 59, 0.25);
+  color: var(--sw-cream);
+  font-size: 15px;
+  cursor: pointer;
+}
+.page-title {
+  margin: 4px 0 16px;
+  font-family: 'Josefin Sans', system-ui, sans-serif;
+  font-size: 28px;
+  letter-spacing: 0.06em;
+}
+.signin-card {
+  max-width: 440px;
+  margin: 24px auto;
+  padding: 22px;
+  background: var(--sw-cream);
+  border: 1px solid var(--sw-adobe);
+  border-top: 5px solid var(--sw-turquoise);
+}
+.signin-card h2 {
+  margin: 0 0 14px;
+  font-size: 22px;
+}
+.signin-card .field input[type='text'],
+.signin-card .field input[type='email'],
+.signin-card .pw-field input {
+  width: 100%;
+  min-height: var(--field-h);
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 16px;
+}
+.signin-card .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.auth-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+.auth-actions > .btn.primary {
+  min-height: var(--tap);
+  width: 100%;
+}
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.auth-links .btn.ghost,
+.home .auth-links .btn.ghost {
+  border-color: transparent;
+  color: var(--sw-turquoise-deep, var(--accent));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---------- moderation ---------- */
+.home-callout.suspended {
+  display: block;
+  border-color: var(--danger);
+  background: #fbe9e5;
+  color: #6b2418;
+}
+.admin-tabs {
+  margin: 8px 0 16px;
+}
+.admin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.admin-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  background: var(--sw-cream, var(--panel));
+  border: 1px solid var(--sw-adobe, var(--line));
+}
+.admin-row.dim {
+  opacity: 0.65;
+}
+.admin-thumb {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  color: var(--ink-soft);
+}
+.admin-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  image-rendering: pixelated;
+}
+.admin-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.admin-text b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-excerpt {
+  font-size: 13px;
+  color: #6e4c44;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+}
+.admin-reasons q {
+  padding: 1px 6px;
+  background: #fdf0d5;
+  border: 1px solid var(--sw-ochre, #d99a3a);
+}
+.admin-flag {
+  font-size: 13px;
+  color: var(--danger);
+}
+.admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.admin-actions select {
+  min-height: 32px;
+  font-size: 15px;
+}
+.btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.admin-log {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.admin-log th,
+.admin-log td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--sw-adobe, var(--line));
+}
+
+/* ---------- your designs: filters, folders, compact tiles ---------- */
+.home-section-head .btn + .btn {
+  margin-left: 0;
+}
+.design-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.design-filters .fb-search {
+  flex: 1 1 220px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--btn-h);
+  padding: 0 10px;
+  background: #fff;
+  border: 1px solid var(--sw-adobe, var(--line));
+}
+.design-filters .fb-search input {
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 16px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.design-filters select {
+  min-height: var(--btn-h);
+  font-size: 15px;
+  padding: 0 6px;
+  border: 1px solid var(--sw-adobe, var(--line));
+  background: #fff;
+}
+.design-count {
+  margin-left: auto;
+}
+.design-folder {
+  margin-bottom: 10px;
+}
+.design-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 1px solid var(--sw-adobe, var(--line));
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.design-folder-head svg {
+  transition: transform 0.15s;
+}
+.design-folder-head svg.open {
+  transform: rotate(90deg);
+}
+.design-grid {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+.design-grid .design-tile {
+  padding: 4px;
+  gap: 2px;
+}
+.design-grid .design-tile-name {
+  font-size: 13px;
+}
+.design-grid .hint {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.design-grid .store-badge {
+  font-size: 10px;
+  padding: 0 4px;
+}
+
+/* ---------- the designer's top bar: the way out, save status, share ---------- */
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.site-nav .menu > .btn {
+  min-width: 28px;
+  padding: 0 4px;
+  border-color: transparent;
+}
+.home-btn {
+  gap: 6px;
+}
+.home-btn-label {
+  font-family: 'Josefin Sans', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 14px;
+  padding-top: 2px;
+}
+.save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: var(--btn-h);
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.save-status.saved {
+  cursor: default;
+}
+.save-status.dirty,
+.save-status.unsaved {
+  color: #9a5a12;
+}
+.share-btn {
+  gap: 6px;
+}
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+@media (max-width: 900px) {
+  .home-btn-label,
+  .save-status-text,
+  .share-btn-label {
+    display: none;
+  }
+}
